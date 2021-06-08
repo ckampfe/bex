@@ -17,11 +17,11 @@ defmodule Bex.Torrent do
 
   def load(path) do
     with {:ok, s} <- File.read(path),
-         {"", metainfo} <- Bex.Decoder.decode(s) do
+         {"", metainfo} <- Bex.Bencode.decode(s) do
       info_hash =
         metainfo
         |> Map.fetch!("info")
-        |> Bex.Encoder.encode()
+        |> Bex.Bencode.encode()
         |> hash()
 
       piece_hashes =
@@ -100,7 +100,7 @@ defmodule Bex.Torrent do
              []
            ),
          body = response.body,
-         {"", decoded} = Bex.Decoder.decode(body) do
+         {"", decoded} = Bex.Bencode.decode(body) do
       decoded
     end
   end

@@ -1,4 +1,4 @@
-defmodule Bex.Decoder do
+defmodule Bex.Bencode do
   # https://www.bittorrent.org/beps/bep_0003.html
   #
   # Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
@@ -28,7 +28,7 @@ defmodule Bex.Decoder do
     {s, string}
   end
 
-  def decode_dict(s, dict) do
+  defp decode_dict(s, dict) do
     {s, list} = decode_list(s, [])
 
     dict =
@@ -40,12 +40,41 @@ defmodule Bex.Decoder do
     {s, dict}
   end
 
-  def decode_list(<<"e", s::binary()>>, els) do
+  defp decode_list(<<"e", s::binary()>>, els) do
     {s, els |> Enum.reverse()}
   end
 
-  def decode_list(s, els) do
+  defp decode_list(s, els) do
     {s, el} = decode(s)
     decode_list(s, [el | els])
+  end
+
+  def encode(term) when is_map(term) do
+    encoded_pairs =
+      term
+      |> Enum.into([])
+      |> Enum.sort_by(fn {k, _v} -> k end)
+      |> Enum.flat_map(fn {k, v} -> [encode(k), encode(v)] end)
+      |> Enum.join()
+
+    "d#{encoded_pairs}e"
+  end
+
+  def encode(term) when is_list(term) do
+    encoded_els =
+      term
+      |> Enum.map(fn el -> encode(el) end)
+      |> Enum.join()
+
+    "l#{encoded_els}e"
+  end
+
+  def encode(term) when is_integer(term) do
+    "i#{term}e"
+  end
+
+  def encode(term) when is_binary(term) do
+    len = :erlang.byte_size(term)
+    "#{len}:#{term}"
   end
 end
