@@ -3,24 +3,20 @@ defmodule Bex.TorrentControllerWorker do
 
   require Logger
 
-  alias Bex.PeerSupervisor
-
   def start_link(%{"metainfo" => %{"decorated" => %{"info_hash" => info_hash}}} = options) do
-    name = {:via, Registry, {Bex.Registry, {info_hash, __MODULE__}}}
+    name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)}")
     GenServer.start_link(__MODULE__, options, name: name)
   end
 
-  def init(options) do
-    options = Map.put(options, :peers, %{})
-    {:ok, options, {:continue, :set_up_listen_socket}}
+  def add_peer(info_hash, peer) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, {:add_peer, peer})
   end
 
-  def handle_continue(:set_up_listen_socket, %{port: port} = state) do
-    {:ok, listen_socket} = :gen_tcp.listen(port, [:binary, active: false])
-    Logger.debug("TCP socket listening on port #{port}")
-    state = Map.put(state, :listen_socket, listen_socket)
-    {:noreply, state, {:continue, :announce}}
+  def init(options) do
+    state = Map.put(options, :peers, %{})
+    {:ok, state, {:continue, :announce}}
   end
 
   def handle_continue(
@@ -52,40 +48,22 @@ defmodule Bex.TorrentControllerWorker do
       }
     )
 
-    {:noreply, state, {:continue, :accept_loop}}
+    {:noreply, state}
   end
 
-  def handle_continue(
-        :accept_loop,
-        %{
-          "metainfo" => %{"decorated" => %{"info_hash" => info_hash}},
-          listen_socket: listen_socket
-        } = state
+  def handle_call(
+        {:add_peer, peer_pid},
+        _from,
+        state
       ) do
-    {:ok, socket} = :gen_tcp.accept(listen_socket)
-
-    Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
-
-    peer_supervisor_name = {:via, Registry, {Bex.Registry, {info_hash, Bex.PeerSupervisor}}}
-
-    {:ok, child_pid} = PeerSupervisor.start_child(peer_supervisor_name, state, socket)
-
-    ref = Process.monitor(child_pid)
-
-    :gen_tcp.controlling_process(socket, child_pid)
-
-    Logger.debug(
-      "Started Bex.PeerWorker #{inspect(child_pid)} to handle socket #{inspect(socket)}"
-    )
+    peer_ref = Process.monitor(peer_pid)
 
     state =
       Map.update!(state, :peers, fn peers ->
-        Map.put(peers, {ref, child_pid}, nil)
+        Map.put(peers, {peer_ref, peer_pid}, nil)
       end)
 
-    Logger.debug("Peers: #{inspect(Map.fetch!(state, :peers))}")
-
-    {:noreply, state, {:continue, :accept_loop}}
+    {:reply, :ok, state}
   end
 
   def handle_info(
@@ -114,11 +92,11 @@ defmodule Bex.TorrentControllerWorker do
         uploaded: 0,
         downloaded: 0,
         left: length,
-        event: "start"
+        event: "started"
       }
     )
 
-    {:noreply, state, {:continue, :accept_loop}}
+    {:noreply, state}
   end
 
   def handle_info({:DOWN, ref, :process, object, reason}, state) do
@@ -136,5 +114,9 @@ defmodule Bex.TorrentControllerWorker do
     announce_time = :timer.seconds(60)
     Process.send_after(self(), :announce, announce_time)
     Logger.debug("Announce scheduled to occur in #{announce_time}")
+  end
+
+  def via_tuple(name) do
+    {:via, Registry, {Bex.Registry, {name, __MODULE__}}}
   end
 end

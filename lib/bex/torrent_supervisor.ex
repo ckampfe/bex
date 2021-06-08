@@ -11,6 +11,7 @@ defmodule Bex.TorrentSupervisor do
   @impl true
   def init(options) do
     children = [
+      {Bex.PeerAcceptor, options},
       {Bex.TorrentControllerWorker, options},
       {Bex.PeerSupervisor, options}
     ]

@@ -1,5 +1,5 @@
 defmodule Bex.PeerWorker do
-  use GenServer
+  use GenServer, restart: :transient
   alias Bex.Peer
 
   require Logger
@@ -152,8 +152,10 @@ defmodule Bex.PeerWorker do
     {:noreply, state}
   end
 
-  def handle_info({:tcp_closed, socket}, _state) do
-    {:stop, "The peer on the other end (#{inspect(socket)})severed the connection."}
+  def handle_info({:tcp_closed, socket}, state) do
+    reason = "The peer on the other end (#{inspect(socket)}) severed the connection."
+    Logger.debug(reason)
+    {:stop, reason, state}
   end
 
   def handle_info(:keepalive, %{socket: socket} = state) do

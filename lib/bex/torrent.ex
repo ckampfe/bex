@@ -7,7 +7,7 @@ defmodule Bex.Torrent do
 
     options = %{
       "metainfo" => metainfo,
-      port: 6882,
+      port: 6881,
       peer_id: "BEXaaaaaaaaaaaaaaaaa",
       max_downloads: 10
     }
