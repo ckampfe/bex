@@ -5,11 +5,16 @@ defmodule Bex.Torrent do
     {:ok, metainfo} = load(path)
     Logger.debug("Loaded torrent from #{path}")
 
+    # TODO these all become config vars
     options = %{
       "metainfo" => metainfo,
-      port: 6881,
+      port: 6882,
       peer_id: "BEXaaaaaaaaaaaaaaaaa",
-      max_downloads: 10
+      max_downloads: 10,
+      peer_checkin_tick: :timer.seconds(5),
+      peer_keepalive_tick: :timer.minutes(1),
+      controller_announce_tick: :timer.minutes(1),
+      controller_interest_tick: :timer.seconds(15)
     }
 
     {:ok, _} = Bex.AllSupervisor.start_child(options)
@@ -88,8 +93,7 @@ defmodule Bex.Torrent do
           port: _port,
           uploaded: _uploaded,
           downloaded: _downloaded,
-          left: _left,
-          event: _event
+          left: _left
         } = query
       ) do
     query = URI.encode_query(query)

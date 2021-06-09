@@ -11,9 +11,9 @@ defmodule Bex.TorrentSupervisor do
   @impl true
   def init(options) do
     children = [
+      {Bex.PeerSupervisor, options},
       {Bex.PeerAcceptor, options},
-      {Bex.TorrentControllerWorker, options},
-      {Bex.PeerSupervisor, options}
+      {Bex.TorrentControllerWorker, options}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
