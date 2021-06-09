@@ -14,6 +14,10 @@ defmodule Bex.PeerWorker do
     {:ok, args, {:continue, :setup}}
   end
 
+  def remote_ip_and_port(pid) do
+    GenServer.call(pid, :remote_ip_and_port)
+  end
+
   def interested(pid) do
     GenServer.call(pid, :interested)
   end
@@ -91,6 +95,11 @@ defmodule Bex.PeerWorker do
     end
 
     {:noreply, state}
+  end
+
+  def handle_call(:remote_ip_and_port, _from, %{socket: socket} = state) do
+    reply = :inet.peername(socket)
+    {:reply, reply, state}
   end
 
   def handle_call(:interested, _from, %{socket: socket} = state) do
@@ -203,7 +212,8 @@ defmodule Bex.PeerWorker do
 
   def handle_info({:tcp_error, socket, reason}, state) do
     Logger.error("#{inspect(socket)}: #{reason}")
-    {:noreply, state}
+    reason = inspect(reason)
+    {:stop, {:shutdown, reason}, state}
   end
 
   def handle_info({:tcp_closed, socket}, state) do

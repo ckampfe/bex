@@ -27,6 +27,11 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, {:peer_checkin, peer_indexes})
   end
 
+  def multicall(info_hash, {m, f, a} = mfa) when is_atom(m) and is_atom(f) and is_list(a) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, {:multicall, mfa})
+  end
+
   ### CALLBACKS
 
   def init(options) do
@@ -76,6 +81,19 @@ defmodule Bex.TorrentControllerWorker do
     schedule_initial_ticks(state)
 
     {:noreply, state}
+  end
+
+  def handle_call({:multicall, {m, f, a}}, _from, %{peers: peers} = state) do
+    reply =
+      peers
+      |> Enum.map(fn {_ref, pid} ->
+        Task.async(fn ->
+          apply(m, f, [pid | a])
+        end)
+      end)
+      |> Enum.map(fn task -> Task.await(task) end)
+
+    {:reply, reply, state}
   end
 
   def handle_call(
