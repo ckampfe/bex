@@ -14,7 +14,7 @@ defmodule Bex.Bencode do
         decode_dict(s, %{}, options)
 
       <<"l", s::binary()>> ->
-        decode_list(s, [])
+        decode_list(s, [], options)
 
       <<"i", s::binary()>> ->
         {int, <<"e", s::binary()>>} = Integer.parse(s)
@@ -31,7 +31,7 @@ defmodule Bex.Bencode do
   end
 
   defp decode_dict(s, dict, options) do
-    {s, list} = decode_list(s, [])
+    {s, list} = decode_list(s, [], options)
 
     mapper =
       if options[:atom_keys] do
@@ -49,13 +49,13 @@ defmodule Bex.Bencode do
     {s, dict}
   end
 
-  defp decode_list(<<"e", s::binary()>>, els) do
+  defp decode_list(<<"e", s::binary()>>, els, _options) do
     {s, els |> Enum.reverse()}
   end
 
-  defp decode_list(s, els) do
-    {s, el} = decode(s)
-    decode_list(s, [el | els])
+  defp decode_list(s, els, options) do
+    {s, el} = decode(s, options)
+    decode_list(s, [el | els], options)
   end
 
   def encode(term) when is_map(term) do

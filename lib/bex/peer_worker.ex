@@ -39,7 +39,7 @@ defmodule Bex.PeerWorker do
   def handle_continue(
         :setup,
         %{
-          "metainfo" => %{"decorated" => %{"info_hash" => info_hash}},
+          metainfo: %{decorated: %{info_hash: info_hash}},
           socket: socket,
           peer_id: peer_id
         } = state
@@ -67,7 +67,7 @@ defmodule Bex.PeerWorker do
   def handle_continue(
         :post_handshake,
         %{
-          "metainfo" => %{"decorated" => %{"have_pieces" => have_pieces}},
+          metainfo: %{decorated: %{have_pieces: have_pieces}},
           socket: socket,
           choked: choked,
           interested: interested
@@ -153,7 +153,7 @@ defmodule Bex.PeerWorker do
          >>},
         %{socket: socket} = state
       ) do
-    if info_hash == state["metainfo"]["decorated"]["info_hash"] do
+    if info_hash == state[:metainfo][:decorated][:info_hash] do
       Logger.debug("Received accurate handshake")
       {:noreply, state, {:continue, :post_handshake}}
     else
@@ -232,7 +232,7 @@ defmodule Bex.PeerWorker do
   def handle_info(
         :checkin,
         %{
-          "metainfo" => %{"decorated" => %{"info_hash" => info_hash}},
+          metainfo: %{decorated: %{info_hash: info_hash}},
           peer_checkin_tick: peer_checkin_tick
         } = state
       ) do

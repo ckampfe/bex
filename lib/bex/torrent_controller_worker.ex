@@ -7,7 +7,7 @@ defmodule Bex.TorrentControllerWorker do
 
   ### PUBLIC API
 
-  def start_link(%{"metainfo" => %{"decorated" => %{"info_hash" => info_hash}}} = options) do
+  def start_link(%{metainfo: %{decorated: %{info_hash: info_hash}}} = options) do
     name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)}")
     GenServer.start_link(__MODULE__, options, name: name)
@@ -41,10 +41,10 @@ defmodule Bex.TorrentControllerWorker do
   def handle_continue(
         :initialize,
         %{
-          "metainfo" => %{
-            "announce" => announce_url,
-            "decorated" => %{"info_hash" => info_hash, "have_pieces" => indexes},
-            "info" => %{"length" => length}
+          metainfo: %{
+            announce: announce_url,
+            decorated: %{info_hash: info_hash, have_pieces: indexes},
+            info: %{length: length}
           },
           port: port,
           peer_id: peer_id,
@@ -137,10 +137,10 @@ defmodule Bex.TorrentControllerWorker do
   def handle_info(
         :announce,
         %{
-          "metainfo" => %{
-            "announce" => announce_url,
-            "decorated" => %{"info_hash" => info_hash},
-            "info" => %{"length" => length}
+          metainfo: %{
+            announce: announce_url,
+            decorated: %{info_hash: info_hash},
+            info: %{length: length}
           },
           port: port,
           peer_id: peer_id,
@@ -170,7 +170,7 @@ defmodule Bex.TorrentControllerWorker do
   def handle_info(
         :update_interest_states,
         %{
-          "metainfo" => %{"decorated" => %{"have_pieces" => indexes}},
+          metainfo: %{decorated: %{have_pieces: indexes}},
           available_piece_sets: available_piece_sets,
           controller_interest_tick: controller_interest_tick
         } = state

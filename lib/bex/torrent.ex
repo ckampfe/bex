@@ -7,7 +7,7 @@ defmodule Bex.Torrent do
 
     # TODO these all become config vars
     options = %{
-      "metainfo" => metainfo,
+      metainfo: metainfo,
       port: 6882,
       peer_id: "BEXaaaaaaaaaaaaaaaaa",
       max_downloads: 10,
@@ -22,15 +22,15 @@ defmodule Bex.Torrent do
 
   def load(path) do
     with {:ok, s} <- File.read(path),
-         {"", metainfo} <- Bex.Bencode.decode(s) do
+         {"", %{info: %{pieces: pieces} = info} = metainfo} <-
+           Bex.Bencode.decode(s, atom_keys: true) do
       info_hash =
-        metainfo
-        |> Map.fetch!("info")
+        info
         |> Bex.Bencode.encode()
         |> hash()
 
       piece_hashes =
-        for <<piece_hash::bytes-size(20) <- Kernel.get_in(metainfo, ["info", "pieces"])>> do
+        for <<piece_hash::bytes-size(20) <- pieces>> do
           piece_hash
         end
 
@@ -38,10 +38,10 @@ defmodule Bex.Torrent do
 
       metainfo =
         metainfo
-        |> Map.put("decorated", %{})
-        |> Kernel.put_in(["decorated", "info_hash"], info_hash)
-        |> Kernel.put_in(["decorated", "piece_hashes"], piece_hashes)
-        |> Kernel.put_in(["decorated", "have_pieces"], have_pieces)
+        |> Map.put(:decorated, %{})
+        |> Kernel.put_in([:decorated, :info_hash], info_hash)
+        |> Kernel.put_in([:decorated, :piece_hashes], piece_hashes)
+        |> Kernel.put_in([:decorated, :have_pieces], have_pieces)
 
       {:ok, metainfo}
     end
@@ -104,8 +104,8 @@ defmodule Bex.Torrent do
              []
            ),
          body = response.body,
-         {"", decoded} = Bex.Bencode.decode(body) do
-      decoded
+         {"", decoded} = Bex.Bencode.decode(body, atom_keys: true) do
+      decoded |> IO.inspect(label: "announce")
     end
   end
 

@@ -35,6 +35,11 @@ defmodule BencodeTest do
 
     assert Bencode.decode("d1:0i99e1:ai99e1:bi99e1:zi99ee", atom_keys: true) ==
              {"", %{z: 99, a: 99, b: 99, "0": 99}}
+
+    assert Bencode.decode("d1:ad1:bd1:ci1eeee", atom_keys: false) ==
+             {"", %{"a" => %{"b" => %{"c" => 1}}}}
+
+    assert Bencode.decode("d1:ad1:bd1:ci1eeee", atom_keys: true) == {"", %{a: %{b: %{c: 1}}}}
   end
 
   test "encode/1 binary" do

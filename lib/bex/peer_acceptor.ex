@@ -4,9 +4,7 @@ defmodule Bex.PeerAcceptor do
 
   alias Bex.PeerSupervisor
 
-  def start_link(
-        %{"metainfo" => %{"decorated" => %{"info_hash" => info_hash}}, port: port} = options
-      ) do
+  def start_link(%{metainfo: %{decorated: %{info_hash: info_hash}}, port: port} = options) do
     name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)} on port #{port}")
     GenServer.start_link(__MODULE__, options, name: name)
@@ -26,7 +24,7 @@ defmodule Bex.PeerAcceptor do
   def handle_continue(
         :accept,
         %{
-          "metainfo" => %{"decorated" => %{"info_hash" => info_hash}},
+          metainfo: %{decorated: %{info_hash: info_hash}},
           listen_socket: listen_socket
         } = state
       ) do

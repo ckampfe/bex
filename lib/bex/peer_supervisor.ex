@@ -2,7 +2,7 @@ defmodule Bex.PeerSupervisor do
   use DynamicSupervisor
   require Logger
 
-  def start_link(%{"metainfo" => %{"decorated" => %{"info_hash" => info_hash}}} = options) do
+  def start_link(%{metainfo: %{decorated: %{info_hash: info_hash}}} = options) do
     name = {:via, Registry, {Bex.Registry, {info_hash, __MODULE__}}}
     Logger.debug("Starting #{inspect(name)}")
     DynamicSupervisor.start_link(__MODULE__, options, name: name)
