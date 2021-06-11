@@ -61,8 +61,12 @@ defmodule Bex.Peer do
   def send_request(socket, index, begin, length) do
     send_message(
       socket,
-      <<6, Torrent.encode_number(index), Torrent.encode_number(begin),
-        Torrent.encode_number(length)>>
+      [
+        6,
+        Torrent.encode_number(index),
+        Torrent.encode_number(begin),
+        Torrent.encode_number(length)
+      ]
     )
   end
 
@@ -78,11 +82,11 @@ defmodule Bex.Peer do
     )
   end
 
-  def send_message(socket, bytes) do
-    length = byte_size(bytes)
+  def send_message(socket, iolist) do
+    length = :erlang.iolist_size(iolist)
     length_as_bytes = Torrent.encode_number(length)
-    bytes = length_as_bytes <> bytes
-    send_message_raw(socket, bytes)
+    iolist = [length_as_bytes | iolist] |> IO.inspect(label: "send")
+    send_message_raw(socket, iolist)
   end
 
   def send_message_raw(socket, bytes) do
@@ -91,8 +95,8 @@ defmodule Bex.Peer do
 
   ### RECEIVE
 
-  def parse_message(packet, message_length) do
-    computed_piece_length = message_length - (1 + 4 + 4)
+  def parse_message(message_length, packet) do
+    chunk_length = message_length - 9
 
     case packet do
       <<0>> ->
@@ -117,12 +121,25 @@ defmodule Bex.Peer do
       <<6, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
         %{type: :request, index: index, begin: begin, length: length}
 
-      <<7, index::32-integer-big, begin::32-integer-big,
-        piece::bytes-size(computed_piece_length)>> ->
-        %{type: :piece, index: index, begin: begin, piece: piece}
+      <<7, index::32-integer-big, begin::32-integer-big, chunk::bytes-size(chunk_length)>> ->
+        %{type: :piece, index: index, begin: begin, chunk: chunk}
 
       <<8, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
         %{type: :cancel, index: index, begin: begin, length: length}
+
+      # <<
+      #   19,
+      #   "BitTorrent protocol",
+      #   reserved_bytes::bytes-size(8),
+      #   info_hash::bytes-size(20),
+      #   peer_id::bytes-size(20)
+      # >> ->
+      #   %{
+      #     type: :handshake,
+      #     reserved_bytes: reserved_bytes,
+      #     info_hash: info_hash,
+      #     peer_id: peer_id
+      #   }
 
       <<>> ->
         %{type: :keepalive}

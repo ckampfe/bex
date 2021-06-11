@@ -14,8 +14,12 @@ defmodule Bex.PeerAcceptor do
     {:ok, args, {:continue, :listen}}
   end
 
-  def handle_continue(:listen, %{port: port} = state) do
+  def handle_continue(
+        :listen,
+        %{port: port} = state
+      ) do
     {:ok, listen_socket} = :gen_tcp.listen(port, [:binary, active: false])
+
     Logger.debug("TCP socket listening on port #{port}")
     state = Map.put(state, :listen_socket, listen_socket)
     {:noreply, state, {:continue, :accept}}
@@ -25,10 +29,15 @@ defmodule Bex.PeerAcceptor do
         :accept,
         %{
           metainfo: %{decorated: %{info_hash: info_hash}},
-          listen_socket: listen_socket
+          listen_socket: listen_socket,
+          tcp_receive_buffer_size_bytes: tcp_receive_buffer_size_bytes
         } = state
       ) do
     {:ok, socket} = :gen_tcp.accept(listen_socket)
+
+    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF BEFORE")
+    :inet.setopts(socket, buffer: tcp_receive_buffer_size_bytes)
+    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF AFTER")
 
     Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
 

@@ -27,6 +27,11 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, {:peer_checkin, peer_indexes})
   end
 
+  def have(info_hash, index) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, {:have, index})
+  end
+
   def multicall(info_hash, {m, f, a} = mfa) when is_atom(m) and is_atom(f) and is_list(a) do
     name = via_tuple(info_hash)
     GenServer.call(name, {:multicall, mfa})
@@ -48,8 +53,10 @@ defmodule Bex.TorrentControllerWorker do
           },
           port: port,
           peer_id: peer_id,
-          controller_announce_tick: _controller_announce_tick,
-          controller_interest_tick: _controller_interest_tick
+          max_downloads: _,
+          controller_announce_tick: _,
+          controller_interest_tick: _,
+          controller_downloads_tick: _
         } = state
       ) do
     state =
@@ -61,6 +68,7 @@ defmodule Bex.TorrentControllerWorker do
           MapSet.new()
         end)
       )
+      |> Map.put(:active_downloads, [])
 
     Logger.debug("Announcing")
 
@@ -94,6 +102,32 @@ defmodule Bex.TorrentControllerWorker do
       |> Enum.map(fn task -> Task.await(task) end)
 
     {:reply, reply, state}
+  end
+
+  def handle_call(
+        {:have, index},
+        {from_pid, _tag} = _from,
+        %{
+          metainfo: %{
+            decorated: %{have_pieces: indexes}
+          },
+          active_downloads: active_downloads
+        } = state
+      ) do
+    # update haves
+    indexes = List.replace_at(indexes, index, true)
+
+    active_downloads =
+      Enum.reject(active_downloads, fn {peer_pid, i} ->
+        peer_pid == from_pid && i == index
+      end)
+
+    state =
+      state
+      |> Kernel.put_in([:metainfo, :decorated, :have_pieces], indexes)
+      |> Map.put(:active_downloads, active_downloads)
+
+    {:reply, :ok, state}
   end
 
   def handle_call(
@@ -216,6 +250,65 @@ defmodule Bex.TorrentControllerWorker do
     {:noreply, state}
   end
 
+  def handle_info(
+        :downloads,
+        %{
+          metainfo: %{decorated: %{have_pieces: pieces}},
+          peers: peers,
+          max_downloads: max_downloads,
+          active_downloads: active_downloads,
+          controller_downloads_tick: controller_downloads_tick,
+          available_piece_sets: available_piece_sets
+        } = state
+      ) do
+    cond do
+      Enum.count(active_downloads) >= max_downloads ->
+        Logger.debug("Reached max concurrent downloads, not staring any more downloads")
+        schedule_downloads(controller_downloads_tick)
+        {:noreply, state}
+
+      Enum.empty?(peers) ->
+        Logger.debug("No available peers to download from")
+        schedule_downloads(controller_downloads_tick)
+        {:noreply, state}
+
+      true ->
+        with {:ok, unhad_index} <- random_unhad_piece(pieces),
+             {:ok, peer_with_piece} <- random_peer_with_piece(unhad_index, available_piece_sets),
+             :ok <- PeerWorker.request_piece(peer_with_piece, unhad_index) do
+          Logger.debug("Asked #{inspect(peer_with_piece)} for #{unhad_index}")
+
+          state =
+            Map.update!(state, :active_downloads, fn active_downloads ->
+              [{peer_with_piece, unhad_index} | active_downloads]
+            end)
+
+          schedule_downloads(controller_downloads_tick)
+
+          {:noreply, state}
+        else
+          :have_all_pieces ->
+            Logger.debug("Download complete, not scheduling further download")
+            {:noreply, state}
+
+          {:empty_peer_set, index} ->
+            Logger.debug("No peers have #{index}")
+            schedule_downloads(controller_downloads_tick)
+            {:noreply, state}
+
+          :empty_peer_sets ->
+            Logger.debug("No peers available, not downloading anything.")
+            schedule_downloads(controller_downloads_tick)
+            {:noreply, state}
+
+          e ->
+            Logger.error(inspect(e))
+            schedule_downloads(controller_downloads_tick)
+            {:noreply, state}
+        end
+    end
+  end
+
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
     Logger.debug("#{inspect({ref, pid})} went down for #{inspect(reason)}")
 
@@ -229,6 +322,11 @@ defmodule Bex.TorrentControllerWorker do
           MapSet.delete(piece_set, pid)
         end)
       end)
+      |> Map.update!(:active_downloads, fn active_downloads ->
+        Enum.reject(active_downloads, fn {peer_pid, _index} ->
+          peer_pid == pid
+        end)
+      end)
 
     {:noreply, state}
   end
@@ -238,20 +336,56 @@ defmodule Bex.TorrentControllerWorker do
   def schedule_initial_ticks(
         %{
           controller_interest_tick: controller_interest_tick,
-          controller_announce_tick: controller_announce_tick
+          controller_announce_tick: controller_announce_tick,
+          controller_downloads_tick: controller_download_tick
         } = _state
       ) do
     schedule_announce(controller_announce_tick)
     schedule_update_interest(controller_interest_tick)
+    schedule_downloads(controller_download_tick)
   end
 
   def schedule_update_interest(controller_interest_tick) do
     Process.send_after(self(), :update_interest_states, controller_interest_tick)
-    Logger.debug("Interest state update scheduled to occur in #{controller_interest_tick}")
+    Logger.debug("Interest state update scheduled to occur in #{controller_interest_tick}ms")
   end
 
   def schedule_announce(controller_announce_tick) do
     Process.send_after(self(), :announce, controller_announce_tick)
-    Logger.debug("Announce scheduled to occur in #{controller_announce_tick}")
+    Logger.debug("Announce scheduled to occur in #{controller_announce_tick}ms")
+  end
+
+  def schedule_downloads(controller_downloads_tick) do
+    Process.send_after(self(), :downloads, controller_downloads_tick)
+    Logger.debug("Downloads scheduled to occur in #{controller_downloads_tick}ms")
+  end
+
+  def random_unhad_piece(pieces) when is_list(pieces) do
+    unhad_pieces =
+      pieces
+      |> Enum.with_index()
+      |> Enum.reject(fn {have?, _index} -> have? end)
+
+    if Enum.empty?(unhad_pieces) do
+      :have_all_pieces
+    else
+      {_have?, index} = Enum.random(unhad_pieces)
+      {:ok, index}
+    end
+  end
+
+  def random_peer_with_piece(index, [] = peer_sets)
+      when is_integer(index) and is_list(peer_sets) do
+    :empty_peer_sets
+  end
+
+  def random_peer_with_piece(index, peer_sets) when is_integer(index) and is_list(peer_sets) do
+    peer_set = Enum.at(peer_sets, index)
+
+    if Enum.empty?(peer_set) do
+      {:empty_peer_set, index}
+    else
+      {:ok, Enum.random(peer_set)}
+    end
   end
 end

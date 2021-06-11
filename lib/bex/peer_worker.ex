@@ -1,6 +1,6 @@
 defmodule Bex.PeerWorker do
   use GenServer, restart: :transient
-  alias Bex.{Peer, TorrentControllerWorker}
+  alias Bex.{Peer, TorrentControllerWorker, Torrent}
 
   require Logger
 
@@ -32,6 +32,10 @@ defmodule Bex.PeerWorker do
 
   def unchoke(pid) do
     GenServer.call(pid, :unchoke)
+  end
+
+  def request_piece(pid, index) do
+    GenServer.call(pid, {:request_piece, index})
   end
 
   ### CALLBACKS
@@ -139,6 +143,32 @@ defmodule Bex.PeerWorker do
   def handle_call(:unchoke, _from, %{socket: socket} = state) do
     state = Map.put(state, :choked, false)
     :ok = Peer.send_unchoke(socket)
+    Logger.debug("Unchoking #{inspect(socket)}")
+    {:reply, :ok, state}
+  end
+
+  def handle_call(
+        {:request_piece, index},
+        _from,
+        %{
+          metainfo: %{
+            info: %{"piece length": piece_length, length: total_length}
+          },
+          chunk_size_bytes: chunk_size_bytes,
+          socket: socket
+        } = state
+      ) do
+    Logger.debug("Requesting piece #{index} from #{inspect(socket)}")
+
+    chunks = Torrent.compute_chunks(total_length, piece_length, index, chunk_size_bytes)
+
+    Logger.debug("Chunks for #{index}: #{inspect(chunks)}")
+
+    Enum.each(chunks, fn %{offset: offset, length: length} ->
+      Logger.debug("Requesting chunk #{offset} for index #{index} from #{inspect(socket)}")
+      :ok = Peer.send_request(socket, index, offset, length)
+    end)
+
     {:reply, :ok, state}
   end
 
@@ -168,15 +198,25 @@ defmodule Bex.PeerWorker do
 
   def handle_info(
         {:tcp, socket, <<message_length::32-big-unsigned-integer, rest::binary()>>},
-        state
+        %{
+          metainfo: %{
+            decorated: %{info_hash: info_hash, piece_hashes: piece_hashes},
+            info: %{"piece length": piece_length}
+          },
+          socket: socket,
+          download_path: download_path
+        } = state
       ) do
-    case Peer.parse_message(rest, message_length) do
+    case Peer.parse_message(message_length, rest) do
       %{type: :choke} ->
-        Logger.debug("Received choke from #{inspect(socket)}")
+        :ok = Peer.send_choke(socket)
+        Logger.debug("Received choke from #{inspect(socket)}, choked them")
         {:noreply, state}
 
       %{type: :unchoke} ->
-        Logger.debug("Received unchoke from #{inspect(socket)}")
+        state = Map.put(state, :choked, false)
+        :ok = Peer.send_unchoke(socket)
+        Logger.debug("Received unchoke from #{inspect(socket)}, unchoked them")
         {:noreply, state}
 
       %{type: :interested} ->
@@ -198,11 +238,43 @@ defmodule Bex.PeerWorker do
       %{type: :request, index: _index, begin: _begin, length: _length} ->
         todo("request")
 
-      %{type: :piece, index: _index, begin: _begin, piece: _piece} ->
+      %{type: :piece, index: index, begin: begin, chunk: chunk} ->
+        Logger.debug("Received chunk: index: #{index}, begin: #{begin}, attempting to verify")
+
+        # expected_hash = Enum.at(piece_hashes, index)
+
+        # with true <- Torrent.verify_piece(piece, expected_hash),
+        #      {:ok, file} <- File.open(download_path, [:read]),
+        #      :ok <- Torrent.write_piece(file, index, piece_length, piece),
+        #      true <- Torrent.verify_piece_from_file(file, index, piece_length, expected_hash),
+        #      :ok <- File.close(file) do
+        #   TorrentControllerWorker.have(info_hash, index)
+        #   {:noreply, state}
+        # else
+        #   e ->
+        #     Logger.warn("#{index} did not match hash, #{inspect(e)}")
+        #     {:noreply, state}
+        # end
+
         todo("piece")
 
       %{type: :cancel, index: _index, begin: _begin, length: _length} ->
         todo("cancel")
+
+      # %{type: :handshake, info_hash: info_hash, peer_id: peer_id, reserved_bytes: _reserved_bytes} ->
+      #   IO.inspect("MATCH2")
+
+      #   if info_hash == state[:metainfo][:decorated][:info_hash] do
+      #     Logger.debug("Received accurate handshake")
+      #     {:noreply, state, {:continue, :post_handshake}}
+      #   else
+      #     :gen_tcp.close(socket)
+
+      #     {:stop,
+      #      {:shutdown,
+      #       "Info hash received from #{peer_id} (#{info_hash}) did not match existing (#{state["metainfo"]["decorated"]["info_hash"]})"},
+      #      state}
+      #   end
 
       %{type: :keepalive} ->
         Logger.debug("Received keepalive from #{inspect(socket)}")

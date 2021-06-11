@@ -1,20 +1,25 @@
 defmodule Bex.Torrent do
   require Logger
 
-  def add_torrent(path) do
-    {:ok, metainfo} = load(path)
-    Logger.debug("Loaded torrent from #{path}")
+  def add_torrent(torrent_file_path, download_path) do
+    {:ok, metainfo} = load(torrent_file_path)
+    Logger.debug("Loaded torrent from #{torrent_file_path}")
+    Logger.debug("Downloading file to #{download_path}")
 
     # TODO these all become config vars
     options = %{
       metainfo: metainfo,
-      port: 6882,
+      port: 6881,
       peer_id: "BEXaaaaaaaaaaaaaaaaa",
-      max_downloads: 10,
-      peer_checkin_tick: :timer.seconds(5),
-      peer_keepalive_tick: :timer.minutes(1),
+      download_path: download_path,
+      tcp_receive_buffer_size_bytes: (:math.pow(2, 14) * 100) |> Kernel.trunc(),
+      max_downloads: 1,
+      chunk_size_bytes: :math.pow(2, 14) |> Kernel.trunc(),
+      peer_checkin_tick: :timer.seconds(10),
+      peer_keepalive_tick: :timer.seconds(10),
       controller_announce_tick: :timer.minutes(1),
-      controller_interest_tick: :timer.seconds(15)
+      controller_interest_tick: :timer.seconds(15),
+      controller_downloads_tick: :timer.seconds(5)
     }
 
     {:ok, _} = Bex.AllSupervisor.start_child(options)
@@ -54,19 +59,19 @@ defmodule Bex.Torrent do
       {:ok, file} = File.open(data_path, [:read])
 
       updated =
-        Kernel.update_in(decorated_metainfo, ["decorated", "have_pieces"], fn have_pieces ->
+        Kernel.update_in(decorated_metainfo, [:decorated, :have_pieces], fn have_pieces ->
           hashes_and_haves =
             Enum.zip(
-              Kernel.get_in(decorated_metainfo, ["decorated", "piece_hashes"]),
+              Kernel.get_in(decorated_metainfo, [:decorated, :piece_hashes]),
               have_pieces
             )
 
-          piece_length = Kernel.get_in(decorated_metainfo, ["info", "piece length"])
+          piece_length = Kernel.get_in(decorated_metainfo, [:info, :"piece length"])
 
           hashes_and_haves
           |> Enum.with_index()
           |> Enum.map(fn {{hash, _have}, index} ->
-            hash_piece(file, index, piece_length) == hash
+            hash_piece_from_file(file, index, piece_length) == hash
           end)
         end)
 
@@ -76,8 +81,8 @@ defmodule Bex.Torrent do
     else
       Logger.debug("#{data_path} does not exist, initializing")
 
-      with {:ok, info} <- Map.fetch(decorated_metainfo, "info"),
-           {:ok, length} <- Map.fetch!(info, "length"),
+      with {:ok, info} <- Map.fetch(decorated_metainfo, :info),
+           {:ok, length} <- Map.fetch!(info, :length),
            {:ok, file} <- File.open(data_path, [:write]) do
         :file.allocate(file, 0, length)
       end
@@ -105,7 +110,7 @@ defmodule Bex.Torrent do
            ),
          body = response.body,
          {"", decoded} = Bex.Bencode.decode(body, atom_keys: true) do
-      decoded |> IO.inspect(label: "announce")
+      decoded
     end
   end
 
@@ -120,7 +125,15 @@ defmodule Bex.Torrent do
     :file.pread(file, location, piece_length)
   end
 
-  def hash_piece(file, index, piece_length) do
+  def verify_piece(piece, expected_hash) do
+    hash(piece) == expected_hash
+  end
+
+  def verify_piece_from_file(file, index, piece_length, expected_hash) do
+    hash_piece_from_file(file, index, piece_length) == expected_hash
+  end
+
+  def hash_piece_from_file(file, index, piece_length) do
     case read_piece(file, index, piece_length) do
       {:ok, bytes} ->
         hash(bytes)
@@ -140,6 +153,49 @@ defmodule Bex.Torrent do
 
   def have(indexes, i) when is_list(indexes) do
     List.replace_at(indexes, i, true)
+  end
+
+  def compute_chunks(total_length, nominal_piece_length, index, nominal_chunk_length) do
+    normal_chunks =
+      Stream.iterate(%{offset: 0, length: nominal_chunk_length}, fn %{
+                                                                      offset: offset,
+                                                                      length: chunk_length
+                                                                    } ->
+        %{offset: offset + chunk_length, length: chunk_length}
+      end)
+
+    piece_location = calculate_piece_location(index, nominal_piece_length)
+
+    actual_piece_length =
+      if total_length - piece_location >= nominal_piece_length do
+        nominal_piece_length
+      else
+        total_length - piece_location
+      end
+
+    number_of_normal_chunks = :erlang.div(actual_piece_length, nominal_chunk_length)
+
+    normal_chunks = Enum.take(normal_chunks, number_of_normal_chunks)
+
+    if Enum.empty?(normal_chunks) do
+      [%{offset: 0, length: total_length - piece_location}]
+    else
+      %{offset: last_chunk_offset, length: last_chunk_length} = List.last(normal_chunks)
+      remaining = actual_piece_length - (last_chunk_offset + last_chunk_length)
+
+      if remaining > 0 do
+        [
+          %{
+            offset: last_chunk_offset + last_chunk_length,
+            length: actual_piece_length - (last_chunk_offset + last_chunk_length)
+          }
+          | normal_chunks
+        ]
+        |> Enum.reverse()
+      else
+        normal_chunks
+      end
+    end
   end
 
   def indexes_to_bitfield(indexes) do
