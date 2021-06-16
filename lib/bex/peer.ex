@@ -1,8 +1,34 @@
 defmodule Bex.Peer do
-  alias Bex.Torrent
+  alias Bex.{Torrent, PeerSupervisor, TorrentControllerWorker}
   require Logger
 
   ### SEND
+
+  def initialize_peer(
+        socket,
+        %{
+          metainfo: %{decorated: %{info_hash: info_hash}},
+          tcp_buffer_size_bytes: tcp_buffer_size_bytes
+        } = state
+      ) do
+    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF BEFORE")
+    :inet.setopts(socket, buffer: tcp_buffer_size_bytes)
+    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF AFTER")
+
+    Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
+
+    peer_supervisor_name = {:via, Registry, {Bex.Registry, {info_hash, Bex.PeerSupervisor}}}
+
+    {:ok, peer_pid} = PeerSupervisor.start_child(peer_supervisor_name, state, socket)
+
+    :gen_tcp.controlling_process(socket, peer_pid)
+
+    Logger.debug(
+      "Started Bex.PeerWorker #{inspect(peer_pid)} to handle socket #{inspect(socket)}"
+    )
+
+    # TorrentControllerWorker.add_peer_pid(info_hash, peer_pid)
+  end
 
   def send_handshake(socket, info_hash, peer_id) do
     bt = "BitTorrent protocol"
@@ -126,20 +152,6 @@ defmodule Bex.Peer do
 
       <<8, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
         %{type: :cancel, index: index, begin: begin, length: length}
-
-      # <<
-      #   19,
-      #   "BitTorrent protocol",
-      #   reserved_bytes::bytes-size(8),
-      #   info_hash::bytes-size(20),
-      #   peer_id::bytes-size(20)
-      # >> ->
-      #   %{
-      #     type: :handshake,
-      #     reserved_bytes: reserved_bytes,
-      #     info_hash: info_hash,
-      #     peer_id: peer_id
-      #   }
 
       <<>> ->
         %{type: :keepalive}

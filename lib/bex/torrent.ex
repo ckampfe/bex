@@ -6,14 +6,17 @@ defmodule Bex.Torrent do
     Logger.debug("Loaded torrent from #{torrent_file_path}")
     Logger.debug("Downloading file to #{download_path}")
 
+    my_peer_id = generate_peer_id()
+
     # TODO these all become config vars
     options = %{
       metainfo: metainfo,
       port: 6881,
-      peer_id: "BEXaaaaaaaaaaaaaaaaa",
+      my_peer_id: my_peer_id,
       download_path: download_path,
-      tcp_receive_buffer_size_bytes: (:math.pow(2, 14) * 100) |> Kernel.trunc(),
+      tcp_buffer_size_bytes: (:math.pow(2, 14) * 100) |> Kernel.trunc(),
       max_downloads: 1,
+      max_peer_connections: 40,
       chunk_size_bytes: :math.pow(2, 14) |> Kernel.trunc(),
       peer_checkin_tick: :timer.seconds(10),
       peer_keepalive_tick: :timer.seconds(10),
@@ -110,7 +113,7 @@ defmodule Bex.Torrent do
            ),
          body = response.body,
          {"", decoded} = Bex.Bencode.decode(body, atom_keys: true) do
-      decoded
+      {:ok, decoded}
     end
   end
 
@@ -231,5 +234,13 @@ defmodule Bex.Torrent do
   # All later integers sent in the protocol are encoded as four bytes big-endian.
   def encode_number(number) do
     <<number::32-integer-big>>
+  end
+
+  def generate_peer_id() do
+    header = "-BEX001"
+    header_length = String.length(header)
+    random_bytes = :rand.bytes(100) |> Base.encode64()
+    bytes_to_take = 20 - header_length - 1
+    header <> String.slice(random_bytes, 0..bytes_to_take)
   end
 end

@@ -22,6 +22,7 @@ defmodule Bex.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:bimap, "~> 1.2"},
       {:httpoison, "~> 1.0"}
     ]
   end

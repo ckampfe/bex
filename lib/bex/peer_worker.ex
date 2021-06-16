@@ -45,7 +45,7 @@ defmodule Bex.PeerWorker do
         %{
           metainfo: %{decorated: %{info_hash: info_hash}},
           socket: socket,
-          peer_id: peer_id
+          my_peer_id: my_peer_id
         } = state
       ) do
     # setting this to active now says that
@@ -61,7 +61,7 @@ defmodule Bex.PeerWorker do
 
     schedule_controller_checkin(checkin_tick)
 
-    :ok = Peer.send_handshake(socket, info_hash, peer_id)
+    :ok = Peer.send_handshake(socket, info_hash, my_peer_id)
 
     Logger.debug("Handshake sent to #{inspect(socket)}")
 
@@ -179,19 +179,28 @@ defmodule Bex.PeerWorker do
            "BitTorrent protocol",
            _reserved_bytes::bytes-size(8),
            info_hash::bytes-size(20),
-           peer_id::bytes-size(20)
+           remote_peer_id::bytes-size(20)
          >>},
         %{socket: socket} = state
       ) do
     if info_hash == state[:metainfo][:decorated][:info_hash] do
-      Logger.debug("Received accurate handshake")
+      peer_pid = self()
+
+      Logger.debug(
+        "Received accurate handshake, registering #{inspect(remote_peer_id)} -> #{inspect(peer_pid)} with TorrentControllerWorker"
+      )
+
+      TorrentControllerWorker.add_peer(info_hash, remote_peer_id, peer_pid)
+
+      state = Map.put(state, :remote_peer_id, remote_peer_id)
+
       {:noreply, state, {:continue, :post_handshake}}
     else
       :gen_tcp.close(socket)
 
       {:stop,
        {:shutdown,
-        "Info hash received from #{peer_id} (#{info_hash}) did not match existing (#{state["metainfo"]["decorated"]["info_hash"]})"},
+        "Info hash received from #{remote_peer_id} (#{info_hash}) did not match existing (#{state["metainfo"]["decorated"]["info_hash"]})"},
        state}
     end
   end
@@ -261,21 +270,6 @@ defmodule Bex.PeerWorker do
       %{type: :cancel, index: _index, begin: _begin, length: _length} ->
         todo("cancel")
 
-      # %{type: :handshake, info_hash: info_hash, peer_id: peer_id, reserved_bytes: _reserved_bytes} ->
-      #   IO.inspect("MATCH2")
-
-      #   if info_hash == state[:metainfo][:decorated][:info_hash] do
-      #     Logger.debug("Received accurate handshake")
-      #     {:noreply, state, {:continue, :post_handshake}}
-      #   else
-      #     :gen_tcp.close(socket)
-
-      #     {:stop,
-      #      {:shutdown,
-      #       "Info hash received from #{peer_id} (#{info_hash}) did not match existing (#{state["metainfo"]["decorated"]["info_hash"]})"},
-      #      state}
-      #   end
-
       %{type: :keepalive} ->
         Logger.debug("Received keepalive from #{inspect(socket)}")
         {:noreply, state}
@@ -305,11 +299,12 @@ defmodule Bex.PeerWorker do
         :checkin,
         %{
           metainfo: %{decorated: %{info_hash: info_hash}},
-          peer_checkin_tick: peer_checkin_tick
+          peer_checkin_tick: peer_checkin_tick,
+          remote_peer_id: remote_peer_id
         } = state
       ) do
     if state[:peer_indexes] do
-      TorrentControllerWorker.peer_checkin(info_hash, state[:peer_indexes])
+      TorrentControllerWorker.peer_checkin(info_hash, remote_peer_id, state[:peer_indexes])
     end
 
     Process.send_after(self(), :checkin, peer_checkin_tick)

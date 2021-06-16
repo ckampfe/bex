@@ -17,14 +17,14 @@ defmodule Bex.TorrentControllerWorker do
     {:via, Registry, {Bex.Registry, {name, __MODULE__}}}
   end
 
-  def add_peer(info_hash, peer) do
+  def add_peer(info_hash, peer_id, peer_pid) do
     name = via_tuple(info_hash)
-    GenServer.call(name, {:add_peer, peer})
+    GenServer.call(name, {:add_peer, peer_id, peer_pid})
   end
 
-  def peer_checkin(info_hash, peer_indexes) do
+  def peer_checkin(info_hash, peer_id, peer_indexes) do
     name = via_tuple(info_hash)
-    GenServer.call(name, {:peer_checkin, peer_indexes})
+    GenServer.call(name, {:peer_checkin, peer_id, peer_indexes})
   end
 
   def have(info_hash, index) do
@@ -52,7 +52,7 @@ defmodule Bex.TorrentControllerWorker do
             info: %{length: length}
           },
           port: port,
-          peer_id: peer_id,
+          my_peer_id: my_peer_id,
           max_downloads: _,
           controller_announce_tick: _,
           controller_interest_tick: _,
@@ -61,7 +61,8 @@ defmodule Bex.TorrentControllerWorker do
       ) do
     state =
       state
-      |> Map.put(:peers, MapSet.new())
+      # %{peer_id -> pid}
+      |> Map.put(:peers, BiMap.new())
       |> Map.put(
         :available_piece_sets,
         Enum.map(indexes, fn _ ->
@@ -72,19 +73,30 @@ defmodule Bex.TorrentControllerWorker do
 
     Logger.debug("Announcing")
 
-    Bex.Torrent.announce(
-      announce_url,
-      %{
-        info_hash: info_hash,
-        peer_id: peer_id,
-        ip: "localhost",
-        port: port,
-        uploaded: 0,
-        downloaded: 0,
-        left: length,
-        event: "started"
-      }
-    )
+    announce =
+      Bex.Torrent.announce(
+        announce_url,
+        %{
+          info_hash: info_hash,
+          peer_id: my_peer_id,
+          ip: "localhost",
+          port: port,
+          uploaded: 0,
+          downloaded: 0,
+          left: length,
+          event: "started"
+        }
+      )
+
+    state =
+      case announce do
+        {:ok, %{peers: announce_peers}} ->
+          Map.put(state, :announce_peers, announce_peers)
+
+        {:error, _error} = e ->
+          Logger.warn(inspect(e))
+          state
+      end
 
     schedule_initial_ticks(state)
 
@@ -92,9 +104,11 @@ defmodule Bex.TorrentControllerWorker do
   end
 
   def handle_call({:multicall, {m, f, a}}, _from, %{peers: peers} = state) do
+    peer_pids = BiMap.values(peers)
+
     reply =
-      peers
-      |> Enum.map(fn {_ref, pid} ->
+      peer_pids
+      |> Enum.map(fn pid ->
         Task.async(fn ->
           apply(m, f, [pid | a])
         end)
@@ -131,26 +145,26 @@ defmodule Bex.TorrentControllerWorker do
   end
 
   def handle_call(
-        {:add_peer, peer_pid},
+        {:add_peer, peer_id, peer_pid},
         _from,
         state
       ) do
-    peer_ref = Process.monitor(peer_pid)
+    _peer_ref = Process.monitor(peer_pid)
 
     state =
       Map.update!(state, :peers, fn peers ->
-        MapSet.put(peers, {peer_ref, peer_pid})
+        BiMap.put(peers, peer_id, peer_pid)
       end)
 
     {:reply, :ok, state}
   end
 
   def handle_call(
-        {:peer_checkin, peer_indexes},
-        {from_pid, _tag} = from,
+        {:peer_checkin, peer_id, peer_indexes},
+        {from_pid, _tag} = _from,
         %{available_piece_sets: _piece_peer_sets} = state
       ) do
-    Logger.debug("Received checkin from #{inspect(from)}, merging")
+    Logger.debug("Received checkin from (#{peer_id}, #{inspect(from_pid)}), merging")
 
     state =
       Map.update!(state, :available_piece_sets, fn available_piece_sets ->
@@ -158,7 +172,7 @@ defmodule Bex.TorrentControllerWorker do
         |> Enum.zip(peer_indexes)
         |> Enum.map(fn {piece_set, peer_has?} ->
           if peer_has? do
-            MapSet.put(piece_set, from_pid)
+            MapSet.put(piece_set, peer_id)
           else
             piece_set
           end
@@ -177,24 +191,46 @@ defmodule Bex.TorrentControllerWorker do
             info: %{length: length}
           },
           port: port,
-          peer_id: peer_id,
+          my_peer_id: my_peer_id,
           controller_announce_tick: controller_announce_tick
         } = state
       ) do
     Logger.debug("Announcing")
 
-    Bex.Torrent.announce(
-      announce_url,
-      %{
-        info_hash: info_hash,
-        peer_id: peer_id,
-        ip: "localhost",
-        port: port,
-        uploaded: 0,
-        downloaded: 0,
-        left: length
-      }
-    )
+    announce =
+      Bex.Torrent.announce(
+        announce_url,
+        %{
+          info_hash: info_hash,
+          peer_id: my_peer_id,
+          ip: "localhost",
+          port: port,
+          uploaded: 0,
+          downloaded: 0,
+          left: length
+        }
+      )
+
+    state =
+      case announce do
+        {:ok, %{peers: announce_peers}} ->
+          announce_peers =
+            announce_peers
+            # rename `peer id` to `peer_id`
+            |> Enum.map(fn %{"peer id": peer_id} = peer ->
+              Map.put(peer, :peer_id, peer_id)
+            end)
+            # remove my peer id if it's there
+            |> Enum.filter(fn %{peer_id: peer_id} ->
+              peer_id != my_peer_id
+            end)
+
+          Map.put(state, :announce_peers, announce_peers)
+
+        {:error, _error} = e ->
+          Logger.warn(e)
+          state
+      end
 
     schedule_announce(controller_announce_tick)
 
@@ -206,7 +242,8 @@ defmodule Bex.TorrentControllerWorker do
         %{
           metainfo: %{decorated: %{have_pieces: indexes}},
           available_piece_sets: available_piece_sets,
-          controller_interest_tick: controller_interest_tick
+          controller_interest_tick: controller_interest_tick,
+          peers: peers
         } = state
       ) do
     # partition peers into two sets:
@@ -234,12 +271,14 @@ defmodule Bex.TorrentControllerWorker do
 
     not_interested_peers = MapSet.difference(all_peers, interested_peers)
 
-    Enum.each(not_interested_peers, fn peer ->
-      PeerWorker.not_interested(peer)
+    Enum.each(not_interested_peers, fn peer_id ->
+      peer_pid = BiMap.get(peers, peer_id)
+      PeerWorker.not_interested(peer_pid)
     end)
 
-    Enum.each(interested_peers, fn peer ->
-      PeerWorker.interested(peer)
+    Enum.each(interested_peers, fn peer_id ->
+      peer_pid = BiMap.get(peers, peer_id)
+      PeerWorker.interested(peer_pid)
     end)
 
     Logger.debug("#{Enum.count(not_interested_peers)} peers not of interest")
@@ -274,13 +313,15 @@ defmodule Bex.TorrentControllerWorker do
 
       true ->
         with {:ok, unhad_index} <- random_unhad_piece(pieces),
-             {:ok, peer_with_piece} <- random_peer_with_piece(unhad_index, available_piece_sets),
-             :ok <- PeerWorker.request_piece(peer_with_piece, unhad_index) do
-          Logger.debug("Asked #{inspect(peer_with_piece)} for #{unhad_index}")
+             {:ok, peer_id_with_piece} <-
+               random_peer_with_piece(unhad_index, available_piece_sets),
+             peer_pid = BiMap.get(peers, peer_id_with_piece),
+             :ok <- PeerWorker.request_piece(peer_pid, unhad_index) do
+          Logger.debug("Asked #{inspect(peer_id_with_piece)} for #{unhad_index}")
 
           state =
             Map.update!(state, :active_downloads, fn active_downloads ->
-              [{peer_with_piece, unhad_index} | active_downloads]
+              [{peer_id_with_piece, unhad_index} | active_downloads]
             end)
 
           schedule_downloads(controller_downloads_tick)
@@ -309,13 +350,20 @@ defmodule Bex.TorrentControllerWorker do
     end
   end
 
-  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+  def handle_info(
+        {:DOWN, ref, :process, pid, reason},
+        %{peers: peers} = state
+      ) do
     Logger.debug("#{inspect({ref, pid})} went down for #{inspect(reason)}")
+
+    peer_id = BiMap.get_key(peers, pid)
+
+    Logger.debug("Removing peer (#{peer_id}, #{inspect(pid)}")
 
     state =
       state
       |> Map.update!(:peers, fn peers ->
-        MapSet.delete(peers, {ref, pid})
+        BiMap.delete_value(peers, pid)
       end)
       |> Map.update!(:available_piece_sets, fn available_piece_sets ->
         Enum.map(available_piece_sets, fn piece_set ->
