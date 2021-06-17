@@ -1,5 +1,5 @@
 defmodule Bex.Peer do
-  alias Bex.{Torrent, PeerSupervisor, TorrentControllerWorker}
+  alias Bex.{PeerSupervisor, Torrent}
   require Logger
 
   ### SEND
@@ -7,13 +7,13 @@ defmodule Bex.Peer do
   def initialize_peer(
         socket,
         %{
-          metainfo: %{decorated: %{info_hash: info_hash}},
-          tcp_buffer_size_bytes: tcp_buffer_size_bytes
+          metainfo: %{decorated: %{info_hash: info_hash}}
+          # tcp_buffer_size_bytes: tcp_buffer_size_bytes
         } = state
       ) do
-    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF BEFORE")
-    :inet.setopts(socket, buffer: tcp_buffer_size_bytes)
-    :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF AFTER")
+    # :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF BEFORE")
+    # :inet.setopts(socket, buffer: tcp_buffer_size_bytes)
+    # :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF AFTER")
 
     Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
 
@@ -26,8 +26,6 @@ defmodule Bex.Peer do
     Logger.debug(
       "Started Bex.PeerWorker #{inspect(peer_pid)} to handle socket #{inspect(socket)}"
     )
-
-    # TorrentControllerWorker.add_peer_pid(info_hash, peer_pid)
   end
 
   def send_handshake(socket, info_hash, peer_id) do
@@ -48,7 +46,7 @@ defmodule Bex.Peer do
       peer_id
     ]
 
-    send_message_raw(
+    send_message(
       socket,
       message
     )
@@ -76,12 +74,12 @@ defmodule Bex.Peer do
 
   def send_have(socket, index) do
     encoded_index = Torrent.encode_number(index)
-    send_message(socket, <<4, encoded_index>>)
+    send_message(socket, [4, encoded_index])
   end
 
   def send_bitfield(socket, indexes) do
     bitfield = Torrent.indexes_to_bitfield(indexes)
-    send_message(socket, <<5, bitfield>>)
+    send_message(socket, [5, bitfield])
   end
 
   def send_request(socket, index, begin, length) do
@@ -97,33 +95,28 @@ defmodule Bex.Peer do
   end
 
   def send_piece(socket, index, begin, piece) do
-    send_message(socket, <<7, Torrent.encode_number(index), Torrent.encode_number(begin), piece>>)
+    send_message(socket, [7, Torrent.encode_number(index), Torrent.encode_number(begin), piece])
   end
 
   def send_cancel(socket, index, begin, length) do
     send_message(
       socket,
-      <<8, Torrent.encode_number(index), Torrent.encode_number(begin),
-        Torrent.encode_number(length)>>
+      [
+        8,
+        Torrent.encode_number(index),
+        Torrent.encode_number(begin),
+        Torrent.encode_number(length)
+      ]
     )
   end
 
   def send_message(socket, iolist) do
-    length = :erlang.iolist_size(iolist)
-    length_as_bytes = Torrent.encode_number(length)
-    iolist = [length_as_bytes | iolist] |> IO.inspect(label: "send")
-    send_message_raw(socket, iolist)
-  end
-
-  def send_message_raw(socket, bytes) do
-    :gen_tcp.send(socket, bytes)
+    :gen_tcp.send(socket, iolist)
   end
 
   ### RECEIVE
 
-  def parse_message(message_length, packet) do
-    chunk_length = message_length - 9
-
+  def parse_message(packet) do
     case packet do
       <<0>> ->
         %{type: :choke}
@@ -141,13 +134,12 @@ defmodule Bex.Peer do
         %{type: :have, index: index}
 
       <<5, bitfield::binary()>> ->
-        indexes = Torrent.bitfield_to_indexes(bitfield)
-        %{type: :bitfield, indexes: indexes}
+        %{type: :bitfield, bitfield: bitfield}
 
       <<6, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
         %{type: :request, index: index, begin: begin, length: length}
 
-      <<7, index::32-integer-big, begin::32-integer-big, chunk::bytes-size(chunk_length)>> ->
+      <<7, index::32-integer-big, begin::32-integer-big, chunk::binary()>> ->
         %{type: :piece, index: index, begin: begin, chunk: chunk}
 
       <<8, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->

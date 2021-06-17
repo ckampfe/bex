@@ -27,9 +27,19 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, {:peer_checkin, peer_id, peer_indexes})
   end
 
-  def have(info_hash, index) do
+  def have(info_hash, peer_id, index) do
     name = via_tuple(info_hash)
-    GenServer.call(name, {:have, index})
+    GenServer.call(name, {:have, peer_id, index})
+  end
+
+  def get_not_haves(info_hash) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, :get_not_haves)
+  end
+
+  def get_peers_for_index(info_hash, index) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, {:get_peers_for_index, index})
   end
 
   def multicall(info_hash, {m, f, a} = mfa) when is_atom(m) and is_atom(f) and is_list(a) do
@@ -119,8 +129,9 @@ defmodule Bex.TorrentControllerWorker do
   end
 
   def handle_call(
-        {:have, index},
-        {from_pid, _tag} = _from,
+        {:have, peer_id, index},
+        # {from_pid, _tag} = _from,
+        _from,
         %{
           metainfo: %{
             decorated: %{have_pieces: indexes}
@@ -132,9 +143,12 @@ defmodule Bex.TorrentControllerWorker do
     indexes = List.replace_at(indexes, index, true)
 
     active_downloads =
-      Enum.reject(active_downloads, fn {peer_pid, i} ->
-        peer_pid == from_pid && i == index
+      active_downloads
+      |> IO.inspect(label: "active downloads pre")
+      |> Enum.reject(fn {active_peer_id, i} ->
+        active_peer_id == peer_id && i == index
       end)
+      |> IO.inspect(label: "active downloads post")
 
     state =
       state
@@ -180,6 +194,33 @@ defmodule Bex.TorrentControllerWorker do
       end)
 
     {:reply, :ok, state}
+  end
+
+  def handle_call(
+        :get_not_haves,
+        _from,
+        %{metainfo: %{decorated: %{have_pieces: pieces}}} = state
+      ) do
+    reply =
+      Enum.with_index(pieces)
+      |> Enum.flat_map(fn {have?, index} ->
+        if !have? do
+          [index]
+        else
+          []
+        end
+      end)
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(
+        {:get_peers_for_index, index},
+        _from,
+        %{available_piece_sets: piece_peer_sets} = state
+      ) do
+    reply = Enum.at(piece_peer_sets, index)
+    {:reply, reply, state}
   end
 
   def handle_info(
@@ -228,7 +269,7 @@ defmodule Bex.TorrentControllerWorker do
           Map.put(state, :announce_peers, announce_peers)
 
         {:error, _error} = e ->
-          Logger.warn(e)
+          Logger.warn(inspect(e))
           state
       end
 
@@ -311,7 +352,46 @@ defmodule Bex.TorrentControllerWorker do
         schedule_downloads(controller_downloads_tick)
         {:noreply, state}
 
+      Enum.all?(pieces) ->
+        Logger.debug("Download finished")
+        {:noreply, state}
+
       true ->
+        # n = max_downloads - Enum.count(active_downloads)
+
+        # if n == 0 do
+        #   Logger.debug("At max downloads, not adding more")
+        # end
+
+        # unhad_pieces = random_unhad_pieces(pieces, n)
+
+        # random_peers_with_pieces =
+        #   random_peers_with_pieces(unhad_pieces, available_piece_sets)
+        #   |> Enum.filter(fn {_index, peer} ->
+        #     !is_nil(peer)
+        #   end)
+        #   |> Enum.into(%{})
+
+        # if Enum.empty?(random_peers_with_pieces) do
+        #   Logger.debug("No peers with pieces")
+        # end
+
+        # these_actives =
+        #   for {unhad_index, peer_id} <- random_peers_with_pieces do
+        #     peer_pid = BiMap.get(peers, peer_id)
+        #     :ok = PeerWorker.request_piece(peer_pid, unhad_index)
+        #     {peer_id, unhad_index}
+        #   end
+
+        # state =
+        #   Map.update!(state, :active_downloads, fn active_downloads ->
+        #     these_actives ++ active_downloads
+        #   end)
+
+        # schedule_downloads(controller_downloads_tick)
+
+        # {:noreply, state}
+
         with {:ok, unhad_index} <- random_unhad_piece(pieces),
              {:ok, peer_id_with_piece} <-
                random_peer_with_piece(unhad_index, available_piece_sets),
@@ -358,7 +438,7 @@ defmodule Bex.TorrentControllerWorker do
 
     peer_id = BiMap.get_key(peers, pid)
 
-    Logger.debug("Removing peer (#{peer_id}, #{inspect(pid)}")
+    Logger.debug("Removing peer (#{peer_id}, #{inspect(pid)})")
 
     state =
       state
@@ -407,6 +487,26 @@ defmodule Bex.TorrentControllerWorker do
     Process.send_after(self(), :downloads, controller_downloads_tick)
     Logger.debug("Downloads scheduled to occur in #{controller_downloads_tick}ms")
   end
+
+  # def random_unhad_pieces(pieces, n) when n >= 0 do
+  #   pieces
+  #   |> Stream.with_index()
+  #   |> Stream.reject(fn {have?, _index} -> have? end)
+  #   |> Stream.map(fn {_have?, index} -> index end)
+  #   |> Enum.take(n)
+  # end
+
+  # def random_peers_with_pieces(indexes, peer_sets) do
+  #   Enum.reduce(indexes, %{}, fn index, acc ->
+  #     peer_set = Enum.at(peer_sets, index)
+
+  #     if Enum.empty?(peer_set) do
+  #       Map.put(acc, index, nil)
+  #     else
+  #       Map.put(acc, index, Enum.random(peer_set))
+  #     end
+  #   end)
+  # end
 
   def random_unhad_piece(pieces) when is_list(pieces) do
     unhad_pieces =

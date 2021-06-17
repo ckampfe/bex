@@ -122,7 +122,7 @@ defmodule TorrentTest do
   end
 
   test "bitfield_to_indexes/1" do
-    assert Torrent.bitfield_to_indexes(<<255>>) == [
+    assert Torrent.bitfield_to_indexes(<<255>>, 8, 1) == [
              true,
              true,
              true,
@@ -133,7 +133,7 @@ defmodule TorrentTest do
              true
            ]
 
-    assert Torrent.bitfield_to_indexes(<<255, 0>>) == [
+    assert Torrent.bitfield_to_indexes(<<255, 0>>, 16, 1) == [
              true,
              true,
              true,
@@ -152,7 +152,7 @@ defmodule TorrentTest do
              false
            ]
 
-    assert Torrent.bitfield_to_indexes(<<255, 224>>) == [
+    assert Torrent.bitfield_to_indexes(<<255, 224>>, 16, 1) == [
              true,
              true,
              true,
@@ -171,7 +171,7 @@ defmodule TorrentTest do
              true
            ]
 
-    assert Torrent.bitfield_to_indexes(<<255, 0>>) ==
+    assert Torrent.bitfield_to_indexes(<<255, 0>>, 16, 1) ==
              [
                true,
                true,

@@ -48,10 +48,6 @@ defmodule Bex.PeerWorker do
           my_peer_id: my_peer_id
         } = state
       ) do
-    # setting this to active now says that
-    # this process will be the one to receive tcp messages
-    :ok = :inet.setopts(socket, active: true)
-
     state =
       state
       |> Map.put(:choked, true)
@@ -62,6 +58,8 @@ defmodule Bex.PeerWorker do
     schedule_controller_checkin(checkin_tick)
 
     :ok = Peer.send_handshake(socket, info_hash, my_peer_id)
+
+    :ok = active_once(socket)
 
     Logger.debug("Handshake sent to #{inspect(socket)}")
 
@@ -164,10 +162,15 @@ defmodule Bex.PeerWorker do
 
     Logger.debug("Chunks for #{index}: #{inspect(chunks)}")
 
-    Enum.each(chunks, fn %{offset: offset, length: length} ->
-      Logger.debug("Requesting chunk #{offset} for index #{index} from #{inspect(socket)}")
-      :ok = Peer.send_request(socket, index, offset, length)
-    end)
+    outstanding_chunks =
+      Enum.map(chunks, fn %{offset: offset, length: length} = chunk ->
+        Logger.debug("Requesting chunk #{offset} for index #{index} from #{inspect(socket)}")
+        :ok = Peer.send_request(socket, index, offset, length)
+        chunk
+      end)
+      |> Enum.into(MapSet.new())
+
+    state = Map.put(state, :outstanding_chunks, %{index => outstanding_chunks})
 
     {:reply, :ok, state}
   end
@@ -184,15 +187,18 @@ defmodule Bex.PeerWorker do
         %{socket: socket} = state
       ) do
     if info_hash == state[:metainfo][:decorated][:info_hash] do
+      Logger.debug("Received accurate handshake from #{inspect(remote_peer_id)}")
       peer_pid = self()
-
-      Logger.debug(
-        "Received accurate handshake, registering #{inspect(remote_peer_id)} -> #{inspect(peer_pid)} with TorrentControllerWorker"
-      )
 
       TorrentControllerWorker.add_peer(info_hash, remote_peer_id, peer_pid)
 
       state = Map.put(state, :remote_peer_id, remote_peer_id)
+
+      Logger.debug(
+        "Registered #{inspect(remote_peer_id)} -> #{inspect(peer_pid)} with TorrentControllerWorker"
+      )
+
+      :ok = :inet.setopts(socket, active: :once, packet: 4)
 
       {:noreply, state, {:continue, :post_handshake}}
     else
@@ -206,72 +212,121 @@ defmodule Bex.PeerWorker do
   end
 
   def handle_info(
-        {:tcp, socket, <<message_length::32-big-unsigned-integer, rest::binary()>>},
+        {:tcp, socket, rest},
         %{
           metainfo: %{
             decorated: %{info_hash: info_hash, piece_hashes: piece_hashes},
-            info: %{"piece length": piece_length}
+            info: %{"piece length": piece_length, length: length}
           },
           socket: socket,
-          download_path: download_path
+          download_path: download_path,
+          remote_peer_id: remote_peer_id
         } = state
       ) do
-    case Peer.parse_message(message_length, rest) do
+    case Peer.parse_message(rest) do
       %{type: :choke} ->
+        state = Map.put(state, :choked, true)
         :ok = Peer.send_choke(socket)
         Logger.debug("Received choke from #{inspect(socket)}, choked them")
+        :ok = active_once(socket)
         {:noreply, state}
 
       %{type: :unchoke} ->
         state = Map.put(state, :choked, false)
         :ok = Peer.send_unchoke(socket)
         Logger.debug("Received unchoke from #{inspect(socket)}, unchoked them")
+        :ok = active_once(socket)
         {:noreply, state}
 
       %{type: :interested} ->
         Logger.debug("Received interested from #{inspect(socket)}")
+        :ok = active_once(socket)
         todo("interested")
 
       %{type: :not_interested} ->
         Logger.debug("Received not_interested from #{inspect(socket)}")
+        :ok = active_once(socket)
         todo("not interested")
 
       %{type: :have, index: _index} ->
+        :ok = active_once(socket)
         todo("have")
 
-      %{type: :bitfield, indexes: peer_indexes} ->
+      %{type: :bitfield, bitfield: bitfield} ->
+        peer_indexes = Torrent.bitfield_to_indexes(bitfield, length, piece_length)
         state = Map.put(state, :peer_indexes, peer_indexes)
         Logger.debug("Received and stored bitfield from #{inspect(socket)}")
+        :ok = active_once(socket)
         {:noreply, state}
 
       %{type: :request, index: _index, begin: _begin, length: _length} ->
+        :ok = active_once(socket)
         todo("request")
 
       %{type: :piece, index: index, begin: begin, chunk: chunk} ->
+        Logger.debug("Received chunk of length #{byte_size(chunk)}")
         Logger.debug("Received chunk: index: #{index}, begin: #{begin}, attempting to verify")
 
-        # expected_hash = Enum.at(piece_hashes, index)
+        state =
+          with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
+               :ok <- Torrent.write_chunk(file, index, begin, piece_length, chunk),
+               :ok <- File.close(file) do
+            Logger.info("Got chunk #{index}, #{begin}")
 
-        # with true <- Torrent.verify_piece(piece, expected_hash),
-        #      {:ok, file} <- File.open(download_path, [:read]),
-        #      :ok <- Torrent.write_piece(file, index, piece_length, piece),
-        #      true <- Torrent.verify_piece_from_file(file, index, piece_length, expected_hash),
-        #      :ok <- File.close(file) do
-        #   TorrentControllerWorker.have(info_hash, index)
-        #   {:noreply, state}
-        # else
-        #   e ->
-        #     Logger.warn("#{index} did not match hash, #{inspect(e)}")
-        #     {:noreply, state}
-        # end
+            outstanding_chunks = Map.get(state, :outstanding_chunks, %{})
 
-        todo("piece")
+            outstanding_chunks_for_index =
+              Map.get_lazy(outstanding_chunks, index, fn -> MapSet.new() end)
+
+            outstanding_chunks_for_index =
+              MapSet.delete(outstanding_chunks_for_index, %{
+                offset: begin,
+                length: byte_size(chunk)
+              })
+
+            outstanding_chunks = Map.put(outstanding_chunks, index, outstanding_chunks_for_index)
+
+            state = Map.put(state, :outstanding_chunks, outstanding_chunks)
+
+            state =
+              if Enum.empty?(outstanding_chunks_for_index) do
+                Logger.info("Got piece #{index}")
+                expected_hash = Enum.at(piece_hashes, index) |> IO.inspect(label: "Expected Hash")
+
+                with {:ok, file} <- File.open(download_path, [:read, :raw, :binary]),
+                     true <-
+                       Torrent.verify_piece_from_file(file, index, piece_length, expected_hash),
+                     :ok <- File.close(file) do
+                  :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
+                  :ok = Peer.send_have(socket, index)
+                  state
+                else
+                  e ->
+                    Logger.warn("#{index} did not match hash, #{inspect(e)}")
+                    state
+                end
+              else
+                state
+              end
+
+            state
+          else
+            e ->
+              Logger.error("Error with chunk #{index}, #{begin}, #{inspect(e)}")
+              state
+          end
+
+        :ok = active_once(socket)
+
+        {:noreply, state}
 
       %{type: :cancel, index: _index, begin: _begin, length: _length} ->
+        :ok = active_once(socket)
         todo("cancel")
 
       %{type: :keepalive} ->
         Logger.debug("Received keepalive from #{inspect(socket)}")
+        :ok = active_once(socket)
         {:noreply, state}
     end
   end
@@ -320,6 +375,10 @@ defmodule Bex.PeerWorker do
 
   defp schedule_keepalive(peer_keepalive_tick) do
     Process.send_after(self(), :keepalive, peer_keepalive_tick)
+  end
+
+  def active_once(socket) do
+    :inet.setopts(socket, [{:active, :once}])
   end
 
   defp todo(message) do

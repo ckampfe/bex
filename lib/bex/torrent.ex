@@ -8,14 +8,26 @@ defmodule Bex.Torrent do
 
     my_peer_id = generate_peer_id()
 
+    metainfo = validate_existing_data(metainfo, download_path)
+
+    have_pieces = Kernel.get_in(metainfo, [:decorated, :have_pieces])
+    {haves, have_nots} = Enum.split_with(have_pieces, fn have? -> have? end)
+    haves_count = Enum.count(haves)
+    have_nots_count = Enum.count(have_nots)
+    total = haves_count + have_nots_count
+
+    Logger.info(
+      "#{download_path}: Have #{haves_count} out of #{total} pieces. #{have_nots_count} pieces remaining."
+    )
+
     # TODO these all become config vars
     options = %{
       metainfo: metainfo,
-      port: 6881,
+      port: 6883,
       my_peer_id: my_peer_id,
       download_path: download_path,
       tcp_buffer_size_bytes: (:math.pow(2, 14) * 100) |> Kernel.trunc(),
-      max_downloads: 1,
+      max_downloads: 5,
       max_peer_connections: 40,
       chunk_size_bytes: :math.pow(2, 14) |> Kernel.trunc(),
       peer_checkin_tick: :timer.seconds(10),
@@ -55,11 +67,11 @@ defmodule Bex.Torrent do
     end
   end
 
-  def validate_existing_data(decorated_metainfo, data_path) do
-    if File.exists?(data_path) do
-      Logger.debug("#{data_path} exists, validating")
+  def validate_existing_data(decorated_metainfo, download_path) do
+    if File.exists?(download_path) do
+      Logger.debug("#{download_path} exists, validating")
 
-      {:ok, file} = File.open(data_path, [:read])
+      {:ok, file} = File.open(download_path, [:read])
 
       updated =
         Kernel.update_in(decorated_metainfo, [:decorated, :have_pieces], fn have_pieces ->
@@ -82,13 +94,20 @@ defmodule Bex.Torrent do
 
       updated
     else
-      Logger.debug("#{data_path} does not exist, initializing")
+      Logger.debug("#{download_path} does not exist, initializing")
 
       with {:ok, info} <- Map.fetch(decorated_metainfo, :info),
-           {:ok, length} <- Map.fetch!(info, :length),
-           {:ok, file} <- File.open(data_path, [:write]) do
-        :file.allocate(file, 0, length)
+           {:ok, length} <- Map.fetch(info, :length),
+           {:ok, file} <- :file.open(download_path, [:write]),
+           :ok <- :file.allocate(file, 0, length),
+           :ok <- File.close(file) do
+        Logger.debug("#{download_path} initialized")
+      else
+        e ->
+          Logger.error(inspect(e))
       end
+
+      decorated_metainfo
     end
   end
 
@@ -120,6 +139,13 @@ defmodule Bex.Torrent do
   def write_piece(file, index, piece_length, piece) do
     location = calculate_piece_location(index, piece_length)
     :file.pwrite(file, location, piece)
+  end
+
+  def write_chunk(file, index, chunk_offset, piece_length, chunk) do
+    location = calculate_piece_location(index, piece_length) + chunk_offset
+    out = :file.pwrite(file, location, chunk)
+    :file.position(file, :bof)
+    out
   end
 
   def read_piece(file, index, piece_length) do
@@ -218,17 +244,19 @@ defmodule Bex.Torrent do
     |> :binary.list_to_bin()
   end
 
-  def bitfield_to_indexes(bitfield) when is_binary(bitfield) do
-    for <<byte <- bitfield>> do
-      for i <- 0..7 do
-        if Bitwise.bsr(Bitwise.band(byte, Bitwise.bsl(1, i)), i) == 1 do
-          true
-        else
-          false
-        end
-      end
+  def bitfield_to_indexes(bitfield, length, piece_length) when is_binary(bitfield) do
+    computed_number_of_pieces = (length / piece_length) |> Kernel.ceil()
+
+    for <<a::1, b::1, c::1, d::1, e::1, f::1, g::1, h::1 <- bitfield>> do
+      [a, b, c, d, e, f, g, h]
+      |> Enum.reverse()
+      |> Enum.map(fn
+        1 -> true
+        0 -> false
+      end)
     end
     |> Enum.flat_map(fn l -> l end)
+    |> Enum.take(computed_number_of_pieces)
   end
 
   # All later integers sent in the protocol are encoded as four bytes big-endian.
@@ -237,7 +265,7 @@ defmodule Bex.Torrent do
   end
 
   def generate_peer_id() do
-    header = "-BEX001"
+    header = "-BEX001-"
     header_length = String.length(header)
     random_bytes = :rand.bytes(100) |> Base.encode64()
     bytes_to_take = 20 - header_length - 1
