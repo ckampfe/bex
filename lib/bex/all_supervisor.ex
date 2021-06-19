@@ -13,4 +13,8 @@ defmodule Bex.AllSupervisor do
     spec = {Bex.TorrentSupervisor, options}
     DynamicSupervisor.start_child(__MODULE__, spec)
   end
+
+  def children() do
+    DynamicSupervisor.which_children(__MODULE__)
+  end
 end

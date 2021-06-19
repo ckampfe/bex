@@ -61,12 +61,11 @@ defmodule Bex.TorrentControllerWorker do
             decorated: %{info_hash: info_hash, have_pieces: indexes},
             info: %{length: length}
           },
-          port: port,
+          listening_port: listening_port,
           my_peer_id: my_peer_id,
-          max_downloads: _,
-          controller_announce_tick: _,
-          controller_interest_tick: _,
-          controller_downloads_tick: _
+          announce_tick: _,
+          interest_tick: _,
+          downloads_tick: _
         } = state
       ) do
     state =
@@ -90,7 +89,7 @@ defmodule Bex.TorrentControllerWorker do
           info_hash: info_hash,
           peer_id: my_peer_id,
           ip: "localhost",
-          port: port,
+          port: listening_port,
           uploaded: 0,
           downloaded: 0,
           left: length,
@@ -231,9 +230,9 @@ defmodule Bex.TorrentControllerWorker do
             decorated: %{info_hash: info_hash},
             info: %{length: length}
           },
-          port: port,
+          listening_port: listening_port,
           my_peer_id: my_peer_id,
-          controller_announce_tick: controller_announce_tick
+          announce_tick: controller_announce_tick
         } = state
       ) do
     Logger.debug("Announcing")
@@ -245,7 +244,7 @@ defmodule Bex.TorrentControllerWorker do
           info_hash: info_hash,
           peer_id: my_peer_id,
           ip: "localhost",
-          port: port,
+          port: listening_port,
           uploaded: 0,
           downloaded: 0,
           left: length
@@ -283,7 +282,7 @@ defmodule Bex.TorrentControllerWorker do
         %{
           metainfo: %{decorated: %{have_pieces: indexes}},
           available_piece_sets: available_piece_sets,
-          controller_interest_tick: controller_interest_tick,
+          interest_tick: controller_interest_tick,
           peers: peers
         } = state
       ) do
@@ -335,18 +334,12 @@ defmodule Bex.TorrentControllerWorker do
         %{
           metainfo: %{decorated: %{have_pieces: pieces}},
           peers: peers,
-          max_downloads: max_downloads,
-          active_downloads: active_downloads,
-          controller_downloads_tick: controller_downloads_tick,
+          # active_downloads: active_downloads,
+          downloads_tick: controller_downloads_tick,
           available_piece_sets: available_piece_sets
         } = state
       ) do
     cond do
-      Enum.count(active_downloads) >= max_downloads ->
-        Logger.debug("Reached max concurrent downloads, not staring any more downloads")
-        schedule_downloads(controller_downloads_tick)
-        {:noreply, state}
-
       Enum.empty?(peers) ->
         Logger.debug("No available peers to download from")
         schedule_downloads(controller_downloads_tick)
@@ -463,9 +456,9 @@ defmodule Bex.TorrentControllerWorker do
 
   def schedule_initial_ticks(
         %{
-          controller_interest_tick: controller_interest_tick,
-          controller_announce_tick: controller_announce_tick,
-          controller_downloads_tick: controller_download_tick
+          interest_tick: controller_interest_tick,
+          announce_tick: controller_announce_tick,
+          downloads_tick: controller_download_tick
         } = _state
       ) do
     schedule_announce(controller_announce_tick)

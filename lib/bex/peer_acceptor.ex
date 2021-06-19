@@ -4,7 +4,9 @@ defmodule Bex.PeerAcceptor do
 
   alias Bex.Peer
 
-  def start_link(%{metainfo: %{decorated: %{info_hash: info_hash}}, port: port} = options) do
+  def start_link(
+        %{metainfo: %{decorated: %{info_hash: info_hash}}, listening_port: port} = options
+      ) do
     name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)} on port #{port}")
     GenServer.start_link(__MODULE__, options, name: name)
@@ -16,11 +18,11 @@ defmodule Bex.PeerAcceptor do
 
   def handle_continue(
         :listen,
-        %{port: port} = state
+        %{listening_port: listening_port} = state
       ) do
-    {:ok, listen_socket} = :gen_tcp.listen(port, [:binary, active: false])
+    {:ok, listen_socket} = :gen_tcp.listen(listening_port, [:binary, active: false])
 
-    Logger.debug("TCP socket listening on port #{port}")
+    Logger.debug("TCP socket listening on port #{listening_port}")
     state = Map.put(state, :listen_socket, listen_socket)
     {:noreply, state, {:continue, :accept}}
   end

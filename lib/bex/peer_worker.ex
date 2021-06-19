@@ -248,9 +248,10 @@ defmodule Bex.PeerWorker do
         :ok = active_once(socket)
         todo("not interested")
 
-      %{type: :have, index: _index} ->
+      %{type: :have, index: index} ->
         :ok = active_once(socket)
-        todo("have")
+        :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
+        {:noreply, state}
 
       %{type: :bitfield, bitfield: bitfield} ->
         peer_indexes = Torrent.bitfield_to_indexes(bitfield, length, piece_length)

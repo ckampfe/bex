@@ -8,13 +8,8 @@ defmodule Bex.Peer do
         socket,
         %{
           metainfo: %{decorated: %{info_hash: info_hash}}
-          # tcp_buffer_size_bytes: tcp_buffer_size_bytes
         } = state
       ) do
-    # :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF BEFORE")
-    # :inet.setopts(socket, buffer: tcp_buffer_size_bytes)
-    # :inet.getopts(socket, [:buffer]) |> IO.inspect(label: "BUF AFTER")
-
     Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
 
     peer_supervisor_name = {:via, Registry, {Bex.Registry, {info_hash, Bex.PeerSupervisor}}}
