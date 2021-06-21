@@ -42,6 +42,20 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, {:get_peers_for_index, index})
   end
 
+  def pause(info_hash) do
+    pause_ticks(info_hash)
+    shutdown_peers(info_hash)
+  end
+
+  def pause_ticks(info_hash) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, :pause_ticks)
+  end
+
+  def shutdown_peers(info_hash) do
+    multicall(info_hash, {PeerWorker, :shutdown, []})
+  end
+
   def multicall(info_hash, {m, f, a} = mfa) when is_atom(m) and is_atom(f) and is_list(a) do
     name = via_tuple(info_hash)
     GenServer.call(name, {:multicall, mfa})
@@ -107,7 +121,9 @@ defmodule Bex.TorrentControllerWorker do
           state
       end
 
-    schedule_initial_ticks(state)
+    tick_refs = schedule_initial_ticks(state)
+
+    state = Map.merge(state, tick_refs)
 
     {:noreply, state}
   end
@@ -222,6 +238,22 @@ defmodule Bex.TorrentControllerWorker do
     {:reply, reply, state}
   end
 
+  def handle_call(
+        :pause_ticks,
+        _from,
+        %{
+          announce_tick_ref: announce_tick_ref,
+          downloads_tick_ref: downloads_tick_ref,
+          interest_tick_ref: interest_tick_ref
+        } = state
+      ) do
+    for ref <- [announce_tick_ref, downloads_tick_ref, interest_tick_ref] do
+      Process.cancel_timer(ref)
+    end
+
+    {:reply, :ok, state}
+  end
+
   def handle_info(
         :announce,
         %{
@@ -272,7 +304,9 @@ defmodule Bex.TorrentControllerWorker do
           state
       end
 
-    schedule_announce(controller_announce_tick)
+    ref = schedule_announce(controller_announce_tick)
+
+    state = Map.put(state, :announce_tick_ref, ref)
 
     {:noreply, state}
   end
@@ -324,7 +358,9 @@ defmodule Bex.TorrentControllerWorker do
     Logger.debug("#{Enum.count(not_interested_peers)} peers not of interest")
     Logger.debug("#{Enum.count(interested_peers)} peers of interest")
 
-    schedule_update_interest(controller_interest_tick)
+    ref = schedule_update_interest(controller_interest_tick)
+
+    state = Map.put(state, :interest_tick_ref, ref)
 
     {:noreply, state}
   end
@@ -397,7 +433,9 @@ defmodule Bex.TorrentControllerWorker do
               [{peer_id_with_piece, unhad_index} | active_downloads]
             end)
 
-          schedule_downloads(controller_downloads_tick)
+          ref = schedule_downloads(controller_downloads_tick)
+
+          state = Map.put(state, :downloads_tick_ref, ref)
 
           {:noreply, state}
         else
@@ -461,24 +499,33 @@ defmodule Bex.TorrentControllerWorker do
           downloads_tick: controller_download_tick
         } = _state
       ) do
-    schedule_announce(controller_announce_tick)
-    schedule_update_interest(controller_interest_tick)
-    schedule_downloads(controller_download_tick)
+    announce_ref = schedule_announce(controller_announce_tick)
+    update_interest_ref = schedule_update_interest(controller_interest_tick)
+    downloads_ref = schedule_downloads(controller_download_tick)
+
+    %{
+      announce_tick_ref: announce_ref,
+      interest_tick_ref: update_interest_ref,
+      downloads_tick_ref: downloads_ref
+    }
   end
 
   def schedule_update_interest(controller_interest_tick) do
-    Process.send_after(self(), :update_interest_states, controller_interest_tick)
+    ref = Process.send_after(self(), :update_interest_states, controller_interest_tick)
     Logger.debug("Interest state update scheduled to occur in #{controller_interest_tick}ms")
+    ref
   end
 
   def schedule_announce(controller_announce_tick) do
-    Process.send_after(self(), :announce, controller_announce_tick)
+    ref = Process.send_after(self(), :announce, controller_announce_tick)
     Logger.debug("Announce scheduled to occur in #{controller_announce_tick}ms")
+    ref
   end
 
   def schedule_downloads(controller_downloads_tick) do
-    Process.send_after(self(), :downloads, controller_downloads_tick)
+    ref = Process.send_after(self(), :downloads, controller_downloads_tick)
     Logger.debug("Downloads scheduled to occur in #{controller_downloads_tick}ms")
+    ref
   end
 
   # def random_unhad_pieces(pieces, n) when n >= 0 do

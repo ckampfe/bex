@@ -1,6 +1,6 @@
 defmodule Bex do
   require Logger
-  alias Bex.Torrent
+  alias Bex.{Torrent, PeerAcceptor, TorrentControllerWorker}
 
   def add_torrent(
         torrent_file_path,
@@ -42,6 +42,23 @@ defmodule Bex do
     info_hash_as_hex = Base.encode16(info_hash)
 
     {:ok, info_hash, info_hash_as_hex}
+  end
+
+  def resume(_info_hash) do
+    # allow TorrentWorkerController to begin adding peers, downloads, uploads
+  end
+
+  def pause(info_hash) do
+    # keep TorrentWorkerController and peers running but prevent uploads and downloads
+    # shutdown PeerAcceptor
+    PeerAcceptor.shutdown(info_hash)
+    # shutdown existing peers
+    # keep TorrentWorkerController alive, but pause timers
+    TorrentControllerWorker.pause(info_hash)
+  end
+
+  def delete(_info_hash) do
+    # shutdown TorrentWorkerController and peers
   end
 
   def default_options() do

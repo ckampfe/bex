@@ -12,6 +12,11 @@ defmodule Bex.PeerAcceptor do
     GenServer.start_link(__MODULE__, options, name: name)
   end
 
+  def shutdown(info_hash) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, :shutdown)
+  end
+
   def init(args) do
     {:ok, args, {:continue, :listen}}
   end
@@ -38,6 +43,10 @@ defmodule Bex.PeerAcceptor do
     Peer.initialize_peer(socket, state)
 
     {:noreply, state, {:continue, :accept}}
+  end
+
+  def handle_call(:shutdown, _from, state) do
+    {:stop, :normal, state}
   end
 
   def via_tuple(name) do

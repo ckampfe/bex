@@ -38,6 +38,10 @@ defmodule Bex.PeerWorker do
     GenServer.call(pid, {:request_piece, index})
   end
 
+  def shutdown(pid) do
+    GenServer.call(pid, :shutdown)
+  end
+
   ### CALLBACKS
 
   def handle_continue(
@@ -173,6 +177,10 @@ defmodule Bex.PeerWorker do
     state = Map.put(state, :outstanding_chunks, %{index => outstanding_chunks})
 
     {:reply, :ok, state}
+  end
+
+  def handle_call(:shutdown, _from, state) do
+    {:stop, :normal, state}
   end
 
   def handle_info(
