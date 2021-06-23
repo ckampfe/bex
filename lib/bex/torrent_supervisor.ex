@@ -3,7 +3,7 @@ defmodule Bex.TorrentSupervisor do
   require Logger
 
   def start_link(%{metainfo: %{decorated: %{info_hash: info_hash}}} = options) do
-    name = {:via, Registry, {Bex.Registry, {info_hash, __MODULE__}}}
+    name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)}")
     Supervisor.start_link(__MODULE__, options, name: name)
   end
@@ -17,5 +17,14 @@ defmodule Bex.TorrentSupervisor do
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  def shutdown(info_hash) do
+    name = via_tuple(info_hash)
+    Supervisor.stop(name)
+  end
+
+  def via_tuple(info_hash) do
+    {:via, Registry, {Bex.Registry, {info_hash, __MODULE__}}}
   end
 end
