@@ -3,7 +3,7 @@ defmodule Bex.TorrentControllerWorker do
 
   require Logger
 
-  alias Bex.PeerWorker
+  alias Bex.{PeerWorker, Peer}
 
   ### PUBLIC API
 
@@ -114,12 +114,23 @@ defmodule Bex.TorrentControllerWorker do
     state =
       case announce do
         {:ok, %{peers: announce_peers}} ->
+          announce_peers =
+            announce_peers
+            |> Enum.map(&rename_peer_id_key/1)
+            |> Enum.filter(&not_me(&1, my_peer_id))
+
           Map.put(state, :announce_peers, announce_peers)
 
         {:error, _error} = e ->
           Logger.warn(inspect(e))
           state
       end
+
+    for peer <- state[:announce_peers] do
+      Task.start(fn ->
+        Peer.connect_and_initialize(peer, state)
+      end)
+    end
 
     tick_refs = schedule_initial_ticks(state)
 
@@ -145,7 +156,6 @@ defmodule Bex.TorrentControllerWorker do
 
   def handle_call(
         {:have, peer_id, index},
-        # {from_pid, _tag} = _from,
         _from,
         %{
           metainfo: %{
@@ -288,14 +298,8 @@ defmodule Bex.TorrentControllerWorker do
         {:ok, %{peers: announce_peers}} ->
           announce_peers =
             announce_peers
-            # rename `peer id` to `peer_id`
-            |> Enum.map(fn %{"peer id": peer_id} = peer ->
-              Map.put(peer, :peer_id, peer_id)
-            end)
-            # remove my peer id if it's there
-            |> Enum.filter(fn %{peer_id: peer_id} ->
-              peer_id != my_peer_id
-            end)
+            |> Enum.map(&rename_peer_id_key/1)
+            |> Enum.filter(&not_me(&1, my_peer_id))
 
           Map.put(state, :announce_peers, announce_peers)
 
@@ -303,6 +307,12 @@ defmodule Bex.TorrentControllerWorker do
           Logger.warn(inspect(e))
           state
       end
+
+    for peer <- state[:announce_peers] do
+      Task.start(fn ->
+        Peer.connect_and_initialize(peer, state)
+      end)
+    end
 
     ref = schedule_announce(controller_announce_tick)
 
@@ -575,5 +585,15 @@ defmodule Bex.TorrentControllerWorker do
     else
       {:ok, Enum.random(peer_set)}
     end
+  end
+
+  def rename_peer_id_key(%{"peer id": peer_id} = peer) do
+    peer
+    |> Map.put(:peer_id, peer_id)
+    |> Map.delete(:"peer id")
+  end
+
+  def not_me(%{peer_id: peer_id} = _peer, my_peer_id) do
+    peer_id != my_peer_id
   end
 end

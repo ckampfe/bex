@@ -4,6 +4,18 @@ defmodule Bex.Peer do
 
   ### SEND
 
+  def connect_and_initialize(%{peer_id: peer_id, ip: ip, port: port} = _peer, state) do
+    ip_as_charlist = String.to_charlist(ip)
+
+    with {:ok, address} <- :inet_parse.address(ip_as_charlist),
+         {:ok, socket} <- :gen_tcp.connect(address, port, [:binary, active: false]) do
+      initialize_peer(socket, state)
+    else
+      {:error, _error} = e ->
+        Logger.warn("#{peer_id}: #{inspect(e)}")
+    end
+  end
+
   def initialize_peer(
         socket,
         %{
@@ -12,7 +24,7 @@ defmodule Bex.Peer do
       ) do
     Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")
 
-    peer_supervisor_name = {:via, Registry, {Bex.Registry, {info_hash, Bex.PeerSupervisor}}}
+    peer_supervisor_name = PeerSupervisor.via_tuple(info_hash)
 
     {:ok, peer_pid} = PeerSupervisor.start_child(peer_supervisor_name, state, socket)
 

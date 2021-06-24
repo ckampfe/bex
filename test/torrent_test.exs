@@ -161,14 +161,14 @@ defmodule TorrentTest do
              true,
              true,
              true,
-             false,
-             false,
-             false,
-             false,
-             false,
              true,
              true,
-             true
+             true,
+             false,
+             false,
+             false,
+             false,
+             false
            ]
 
     assert Torrent.bitfield_to_indexes(<<255, 0>>, 16, 1) ==

@@ -210,7 +210,6 @@ defmodule Bex.Torrent do
 
     for <<a::1, b::1, c::1, d::1, e::1, f::1, g::1, h::1 <- bitfield>> do
       [a, b, c, d, e, f, g, h]
-      |> Enum.reverse()
       |> Enum.map(fn
         1 -> true
         0 -> false

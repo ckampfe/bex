@@ -233,28 +233,42 @@ defmodule Bex.PeerWorker do
       ) do
     case Peer.parse_message(rest) do
       %{type: :choke} ->
-        state = Map.put(state, :choked, true)
-        :ok = Peer.send_choke(socket)
         Logger.debug("Received choke from #{inspect(socket)}, choked them")
+
+        state =
+          if !state[:choked] do
+            state = Map.put(state, :choked, true)
+            :ok = Peer.send_choke(socket)
+            Logger.debug("Choked #{inspect(socket)})")
+            state
+          end
+
         :ok = active_once(socket)
         {:noreply, state}
 
       %{type: :unchoke} ->
-        state = Map.put(state, :choked, false)
-        :ok = Peer.send_unchoke(socket)
         Logger.debug("Received unchoke from #{inspect(socket)}, unchoked them")
+
+        state =
+          if state[:choked] do
+            state = Map.put(state, :choked, false)
+            :ok = Peer.send_unchoke(socket)
+            Logger.debug("Unchoked #{inspect(socket)}")
+            state
+          end
+
         :ok = active_once(socket)
         {:noreply, state}
 
       %{type: :interested} ->
         Logger.debug("Received interested from #{inspect(socket)}")
         :ok = active_once(socket)
-        todo("interested")
+        {:noreply, state}
 
       %{type: :not_interested} ->
         Logger.debug("Received not_interested from #{inspect(socket)}")
         :ok = active_once(socket)
-        todo("not interested")
+        {:noreply, state}
 
       %{type: :have, index: index} ->
         :ok = active_once(socket)

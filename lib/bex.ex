@@ -18,11 +18,11 @@ defmodule Bex do
     total = haves_count + have_nots_count
 
     if have_nots_count == 0 do
+      Logger.debug("#{download_path}: Have all pieces. Seeding.")
+    else
       Logger.info(
         "#{download_path}: Have #{haves_count} out of #{total} pieces. #{have_nots_count} pieces remaining."
       )
-    else
-      Logger.debug("#{download_path}: Have all pieces. Seeding.")
     end
 
     application_global_config = Application.get_all_env(:bex)
@@ -61,6 +61,15 @@ defmodule Bex do
     # shutdown TorrentWorkerController and peers
     pause(info_hash)
     TorrentSupervisor.shutdown(info_hash)
+  end
+
+  def torrents() do
+    Bex.AllSupervisor.children()
+    |> Enum.flat_map(fn {_, pid, _, _} -> Registry.keys(Bex.Registry, pid) end)
+    |> Enum.map(fn {info_hash, _module} ->
+      info_hash_as_hex = Base.encode16(info_hash)
+      {info_hash_as_hex, info_hash}
+    end)
   end
 
   def default_options() do
