@@ -25,10 +25,15 @@ defmodule Bex.PeerAcceptor do
         :listen,
         %{listening_port: listening_port} = state
       ) do
-    {:ok, listen_socket} = :gen_tcp.listen(listening_port, [:binary, active: false])
+    {:ok, listen_socket, actual_listening_port} = listen_on_port(listening_port)
 
-    Logger.debug("TCP socket listening on port #{listening_port}")
-    state = Map.put(state, :listen_socket, listen_socket)
+    Logger.debug("TCP socket listening on port #{actual_listening_port}")
+
+    state =
+      state
+      |> Map.put(:listen_socket, listen_socket)
+      |> Map.put(:actual_listening_port, actual_listening_port)
+
     {:noreply, state, {:continue, :accept}}
   end
 
@@ -47,6 +52,21 @@ defmodule Bex.PeerAcceptor do
 
   def handle_call(:shutdown, _from, state) do
     {:stop, :normal, state}
+  end
+
+  def listen_on_port(port) do
+    do_listen_on_port(port)
+  end
+
+  defp do_listen_on_port(port) do
+    case :gen_tcp.listen(port, [:binary, active: false]) do
+      {:ok, listen_socket} ->
+        {:ok, listen_socket, port}
+
+      e ->
+        Logger.warn("#{inspect(e)}: unable to listen on port #{port}, trying #{port + 1}")
+        do_listen_on_port(port + 1)
+    end
   end
 
   def via_tuple(name) do

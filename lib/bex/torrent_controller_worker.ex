@@ -71,12 +71,12 @@ defmodule Bex.TorrentControllerWorker do
         :initialize,
         %{
           metainfo: %{
-            announce: announce_url,
-            decorated: %{info_hash: info_hash, have_pieces: indexes},
-            info: %{length: length}
+            announce: _announce_url,
+            decorated: %{info_hash: _info_hash, have_pieces: indexes},
+            info: %{length: _length}
           },
-          listening_port: listening_port,
-          my_peer_id: my_peer_id,
+          listening_port: _listening_port,
+          my_peer_id: _my_peer_id,
           announce_tick: _,
           interest_tick: _,
           downloads_tick: _
@@ -94,43 +94,7 @@ defmodule Bex.TorrentControllerWorker do
       )
       |> Map.put(:active_downloads, [])
 
-    Logger.debug("Announcing")
-
-    announce =
-      Bex.Torrent.announce(
-        announce_url,
-        %{
-          info_hash: info_hash,
-          peer_id: my_peer_id,
-          ip: "localhost",
-          port: listening_port,
-          uploaded: 0,
-          downloaded: 0,
-          left: length,
-          event: "started"
-        }
-      )
-
-    state =
-      case announce do
-        {:ok, %{peers: announce_peers}} ->
-          announce_peers =
-            announce_peers
-            |> Enum.map(&rename_peer_id_key/1)
-            |> Enum.filter(&not_me(&1, my_peer_id))
-
-          Map.put(state, :announce_peers, announce_peers)
-
-        {:error, _error} = e ->
-          Logger.warn(inspect(e))
-          state
-      end
-
-    for peer <- state[:announce_peers] do
-      Task.start(fn ->
-        Peer.connect_and_initialize(peer, state)
-      end)
-    end
+    state = announce(state, "started")
 
     tick_refs = schedule_initial_ticks(state)
 
@@ -268,51 +232,16 @@ defmodule Bex.TorrentControllerWorker do
         :announce,
         %{
           metainfo: %{
-            announce: announce_url,
-            decorated: %{info_hash: info_hash},
-            info: %{length: length}
+            announce: _announce_url,
+            decorated: %{info_hash: _info_hash},
+            info: %{length: _length}
           },
-          listening_port: listening_port,
-          my_peer_id: my_peer_id,
+          listening_port: _listening_port,
+          my_peer_id: _my_peer_id,
           announce_tick: controller_announce_tick
         } = state
       ) do
-    Logger.debug("Announcing")
-
-    announce =
-      Bex.Torrent.announce(
-        announce_url,
-        %{
-          info_hash: info_hash,
-          peer_id: my_peer_id,
-          ip: "localhost",
-          port: listening_port,
-          uploaded: 0,
-          downloaded: 0,
-          left: length
-        }
-      )
-
-    state =
-      case announce do
-        {:ok, %{peers: announce_peers}} ->
-          announce_peers =
-            announce_peers
-            |> Enum.map(&rename_peer_id_key/1)
-            |> Enum.filter(&not_me(&1, my_peer_id))
-
-          Map.put(state, :announce_peers, announce_peers)
-
-        {:error, _error} = e ->
-          Logger.warn(inspect(e))
-          state
-      end
-
-    for peer <- state[:announce_peers] do
-      Task.start(fn ->
-        Peer.connect_and_initialize(peer, state)
-      end)
-    end
+    state = announce(state)
 
     ref = schedule_announce(controller_announce_tick)
 
@@ -501,6 +430,72 @@ defmodule Bex.TorrentControllerWorker do
   end
 
   ### IMPL
+
+  def announce(
+        %{
+          my_peer_id: my_peer_id,
+          listening_port: listening_port,
+          metainfo: %{
+            announce: announce_url,
+            decorated: %{info_hash: info_hash, have_pieces: _indexes},
+            info: %{length: length}
+          }
+        } = state,
+        event \\ nil
+      ) do
+    Logger.debug("Announcing")
+
+    base_announce_params = %{
+      info_hash: info_hash,
+      peer_id: my_peer_id,
+      ip: "localhost",
+      port: listening_port,
+      uploaded: 0,
+      downloaded: 0,
+      left: length
+    }
+
+    announce_params =
+      if event do
+        Map.put(base_announce_params, :event, event)
+      else
+        base_announce_params
+      end
+
+    announce =
+      Bex.Torrent.announce(
+        announce_url,
+        announce_params
+      )
+
+    state =
+      case announce do
+        {:ok, %{peers: announce_peers}} ->
+          announce_peers =
+            announce_peers
+            |> Enum.map(&rename_peer_id_key/1)
+            |> Enum.filter(&not_me(&1, my_peer_id))
+
+          state = Map.put(state, :announce_peers, announce_peers)
+
+          for peer <- state[:announce_peers] do
+            Task.start(fn ->
+              Peer.connect_and_initialize(peer, state)
+            end)
+          end
+
+          state
+
+        {:error, _error} = e ->
+          Logger.warn(
+            "#{Base.encode16(info_hash)} Could not announce #{announce_url}: #{inspect(e)}"
+          )
+
+          state
+      end
+
+    state
+  end
 
   def schedule_initial_ticks(
         %{
