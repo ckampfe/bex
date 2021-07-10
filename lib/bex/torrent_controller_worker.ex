@@ -325,75 +325,36 @@ defmodule Bex.TorrentControllerWorker do
         {:noreply, state}
 
       true ->
-        # n = max_downloads - Enum.count(active_downloads)
+        case random_unhad_available_peer_pieces(pieces, available_piece_sets, 4) do
+          # [{peer_id, index}]
+          {:ok, peer_id_pieces} ->
+            peer_id_pieces
+            |> Enum.each(fn {peer_id, index} ->
+              peer_pid = BiMap.get(peers, peer_id)
 
-        # if n == 0 do
-        #   Logger.debug("At max downloads, not adding more")
-        # end
-
-        # unhad_pieces = random_unhad_pieces(pieces, n)
-
-        # random_peers_with_pieces =
-        #   random_peers_with_pieces(unhad_pieces, available_piece_sets)
-        #   |> Enum.filter(fn {_index, peer} ->
-        #     !is_nil(peer)
-        #   end)
-        #   |> Enum.into(%{})
-
-        # if Enum.empty?(random_peers_with_pieces) do
-        #   Logger.debug("No peers with pieces")
-        # end
-
-        # these_actives =
-        #   for {unhad_index, peer_id} <- random_peers_with_pieces do
-        #     peer_pid = BiMap.get(peers, peer_id)
-        #     :ok = PeerWorker.request_piece(peer_pid, unhad_index)
-        #     {peer_id, unhad_index}
-        #   end
-
-        # state =
-        #   Map.update!(state, :active_downloads, fn active_downloads ->
-        #     these_actives ++ active_downloads
-        #   end)
-
-        # schedule_downloads(controller_downloads_tick)
-
-        # {:noreply, state}
-
-        with {:ok, unhad_index} <- random_unhad_piece(pieces),
-             {:ok, peer_id_with_piece} <-
-               random_peer_with_piece(unhad_index, available_piece_sets),
-             peer_pid = BiMap.get(peers, peer_id_with_piece),
-             :ok <- PeerWorker.request_piece(peer_pid, unhad_index) do
-          Logger.debug("Asked #{inspect(peer_id_with_piece)} for #{unhad_index}")
-
-          state =
-            Map.update!(state, :active_downloads, fn active_downloads ->
-              [{peer_id_with_piece, unhad_index} | active_downloads]
+              Task.start(fn ->
+                PeerWorker.request_piece(peer_pid, index)
+                Logger.debug("Asked #{inspect(peer_id)} for #{index}")
+              end)
             end)
 
-          ref = schedule_downloads(controller_downloads_tick)
+            state =
+              Map.update!(state, :active_downloads, fn active_downloads ->
+                peer_id_pieces ++ active_downloads
+              end)
 
-          state = Map.put(state, :downloads_tick_ref, ref)
+            ref = schedule_downloads(controller_downloads_tick)
 
-          {:noreply, state}
-        else
+            state = Map.put(state, :downloads_tick_ref, ref)
+
+            {:noreply, state}
+
           :have_all_pieces ->
             Logger.debug("Download complete, not scheduling further download")
             {:noreply, state}
 
-          {:empty_peer_set, index} ->
-            Logger.debug("No peers have #{index}")
-            schedule_downloads(controller_downloads_tick)
-            {:noreply, state}
-
-          :empty_peer_sets ->
+          :no_available_peers ->
             Logger.debug("No peers available, not downloading anything.")
-            schedule_downloads(controller_downloads_tick)
-            {:noreply, state}
-
-          e ->
-            Logger.error(inspect(e))
             schedule_downloads(controller_downloads_tick)
             {:noreply, state}
         end
@@ -533,52 +494,32 @@ defmodule Bex.TorrentControllerWorker do
     ref
   end
 
-  # def random_unhad_pieces(pieces, n) when n >= 0 do
-  #   pieces
-  #   |> Stream.with_index()
-  #   |> Stream.reject(fn {have?, _index} -> have? end)
-  #   |> Stream.map(fn {_have?, index} -> index end)
-  #   |> Enum.take(n)
-  # end
+  def random_unhad_available_peer_pieces(pieces, peer_sets, n) when n > 0 do
+    cond do
+      Enum.all?(pieces, fn have? -> have? end) ->
+        :have_all_pieces
 
-  # def random_peers_with_pieces(indexes, peer_sets) do
-  #   Enum.reduce(indexes, %{}, fn index, acc ->
-  #     peer_set = Enum.at(peer_sets, index)
+      Enum.all?(peer_sets, fn peer_set -> Enum.empty?(peer_set) end) ->
+        :no_available_peers
 
-  #     if Enum.empty?(peer_set) do
-  #       Map.put(acc, index, nil)
-  #     else
-  #       Map.put(acc, index, Enum.random(peer_set))
-  #     end
-  #   end)
-  # end
+      true ->
+        unhad_available_pieces =
+          pieces
+          |> Enum.zip(peer_sets)
+          |> Enum.with_index(fn {have?, peer_set}, index ->
+            {have?, peer_set, index}
+          end)
+          |> Enum.reject(fn {have?, peer_set, _index} ->
+            have? || Enum.empty?(peer_set)
+          end)
+          |> Enum.shuffle()
+          |> Enum.take(n)
+          |> Enum.map(fn {_have?, peer_set, index} ->
+            peer_id = Enum.random(peer_set)
+            {peer_id, index}
+          end)
 
-  def random_unhad_piece(pieces) when is_list(pieces) do
-    unhad_pieces =
-      pieces
-      |> Enum.with_index()
-      |> Enum.reject(fn {have?, _index} -> have? end)
-
-    if Enum.empty?(unhad_pieces) do
-      :have_all_pieces
-    else
-      {_have?, index} = Enum.random(unhad_pieces)
-      {:ok, index}
-    end
-  end
-
-  def random_peer_with_piece(index, [] = peer_sets)
-      when is_integer(index) and is_list(peer_sets) do
-    :empty_peer_sets
-  end
-
-  def random_peer_with_piece(index, peer_sets) when is_integer(index) and is_list(peer_sets) do
-    peer_set = Enum.at(peer_sets, index)
-
-    if Enum.empty?(peer_set) do
-      {:empty_peer_set, index}
-    else
-      {:ok, Enum.random(peer_set)}
+        {:ok, unhad_available_pieces}
     end
   end
 
