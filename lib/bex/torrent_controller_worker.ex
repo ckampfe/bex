@@ -1,4 +1,6 @@
 defmodule Bex.TorrentControllerWorker do
+  @moduledoc false
+
   use GenServer
 
   require Logger

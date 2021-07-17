@@ -1,4 +1,6 @@
 defmodule Bex.Torrent do
+  @moduledoc false
+
   require Logger
 
   def load(path) do

@@ -1,4 +1,6 @@
 defmodule Bex.Peer do
+  @moduledoc false
+
   alias Bex.{PeerSupervisor, Torrent}
   require Logger
 

@@ -1,4 +1,6 @@
 defmodule Bex.AllSupervisor do
+  @moduledoc false
+
   use DynamicSupervisor
 
   def start_link(args) do

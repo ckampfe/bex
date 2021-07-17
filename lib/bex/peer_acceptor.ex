@@ -1,4 +1,6 @@
 defmodule Bex.PeerAcceptor do
+  @moduledoc false
+
   use GenServer
   require Logger
 

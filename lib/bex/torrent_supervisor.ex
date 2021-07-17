@@ -1,4 +1,6 @@
 defmodule Bex.TorrentSupervisor do
+  @moduledoc false
+
   use Supervisor
   require Logger
 

@@ -1,4 +1,6 @@
 defmodule Bex.PeerSupervisor do
+  @moduledoc false
+
   use DynamicSupervisor
   require Logger
 
