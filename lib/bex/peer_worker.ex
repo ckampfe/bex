@@ -243,6 +243,8 @@ defmodule Bex.PeerWorker do
             :ok = Peer.send_choke(socket)
             Logger.debug("Choked #{inspect(socket)})")
             state
+          else
+            state
           end
 
         :ok = active_once(socket)
@@ -257,6 +259,8 @@ defmodule Bex.PeerWorker do
             :ok = Peer.send_unchoke(socket)
             Logger.debug("Unchoked #{inspect(socket)}")
             state
+          else
+            state
           end
 
         :ok = active_once(socket)
@@ -264,6 +268,17 @@ defmodule Bex.PeerWorker do
 
       %{type: :interested} ->
         Logger.debug("Received interested from #{inspect(socket)}")
+
+        state =
+          if state[:choked] do
+            state = Map.put(state, :choked, false)
+            :ok = Peer.send_unchoke(socket)
+            Logger.debug("Unchoked #{inspect(socket)}")
+            state
+          else
+            state
+          end
+
         :ok = active_once(socket)
         {:noreply, state}
 
@@ -284,9 +299,16 @@ defmodule Bex.PeerWorker do
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :request, index: _index, begin: _begin, length: _length} ->
+      %{type: :request, index: index, begin: begin, length: length} ->
+        with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
+             {:ok, chunk} <- Torrent.read_chunk(file, index, piece_length, begin, length) do
+          :ok = Peer.send_piece(socket, index, begin, chunk)
+          Logger.debug("Sent chunk #{index} #{begin} #{length} to peer")
+        end
+
         :ok = active_once(socket)
-        todo("request")
+
+        {:noreply, state}
 
       %{type: :piece, index: index, begin: begin, chunk: chunk} ->
         Logger.debug("Received chunk of length #{byte_size(chunk)}")
@@ -387,7 +409,7 @@ defmodule Bex.PeerWorker do
       TorrentControllerWorker.peer_checkin(info_hash, remote_peer_id, state[:peer_indexes])
     end
 
-    Process.send_after(self(), :checkin, peer_checkin_tick)
+    schedule_controller_checkin(peer_checkin_tick)
 
     {:noreply, state}
   end

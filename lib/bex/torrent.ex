@@ -117,6 +117,12 @@ defmodule Bex.Torrent do
     :file.pread(file, location, piece_length)
   end
 
+  def read_chunk(file, index, piece_length, begin, length) do
+    index_location = calculate_piece_location(index, piece_length)
+    location = index_location + begin
+    :file.pread(file, location, length)
+  end
+
   def verify_piece(piece, expected_hash) do
     hash(piece) == expected_hash
   end
@@ -192,9 +198,11 @@ defmodule Bex.Torrent do
 
   def indexes_to_bitfield(indexes) do
     indexes
+    # |> pad_to_multiple_of_eight()
     |> Enum.chunk_every(8)
     |> Enum.map(fn indexes_chunk ->
       indexes_chunk
+      # |> Enum.reverse()
       |> Enum.with_index()
       |> Enum.reduce(0, fn {index, i}, acc ->
         if index do
@@ -220,6 +228,24 @@ defmodule Bex.Torrent do
     |> Enum.flat_map(fn l -> l end)
     |> Enum.take(computed_number_of_pieces)
   end
+
+  # def pad_to_multiple_of_eight(indexes) do
+  #   length = Enum.count(indexes)
+
+  #   if :erlang.rem(length, 8) == 0 do
+  #     indexes
+  #   else
+  #     multiple_of_eight = Bitwise.band(length + 7, -8)
+  #     to_add = multiple_of_eight - length
+
+  #     add_list =
+  #       for _ <- 1..to_add do
+  #         true
+  #       end
+
+  #     indexes ++ add_list
+  #   end
+  # end
 
   # All later integers sent in the protocol are encoded as four bytes big-endian.
   def encode_number(number) do

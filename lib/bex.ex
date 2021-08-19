@@ -11,19 +11,6 @@ defmodule Bex do
     Logger.debug("Loaded torrent from #{torrent_file_path}")
     metainfo = Torrent.validate_existing_data(metainfo, download_path)
     Logger.debug("Validated #{torrent_file_path} #{download_path}")
-    have_pieces = Kernel.get_in(metainfo, [:decorated, :have_pieces])
-    {haves, have_nots} = Enum.split_with(have_pieces, fn have? -> have? end)
-    haves_count = Enum.count(haves)
-    have_nots_count = Enum.count(have_nots)
-    total = haves_count + have_nots_count
-
-    if have_nots_count == 0 do
-      Logger.debug("#{download_path}: Have all pieces. Seeding.")
-    else
-      Logger.info(
-        "#{download_path}: Have #{haves_count} out of #{total} pieces. #{have_nots_count} pieces remaining."
-      )
-    end
 
     application_global_config = Application.get_all_env(:bex)
 

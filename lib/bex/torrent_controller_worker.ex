@@ -77,6 +77,7 @@ defmodule Bex.TorrentControllerWorker do
             decorated: %{info_hash: _info_hash, have_pieces: indexes},
             info: %{length: _length}
           },
+          download_path: download_path,
           listening_port: _listening_port,
           my_peer_id: _my_peer_id,
           announce_tick: _,
@@ -96,7 +97,22 @@ defmodule Bex.TorrentControllerWorker do
       )
       |> Map.put(:active_downloads, [])
 
-    state = announce(state, "started")
+    {haves, have_nots} = Enum.split_with(indexes, fn have? -> have? end)
+    haves_count = Enum.count(haves)
+    have_nots_count = Enum.count(have_nots)
+    total = haves_count + have_nots_count
+
+    state =
+      if have_nots_count == 0 do
+        Logger.debug("#{download_path}: Have all pieces. Seeding.")
+        announce(state, "completed")
+      else
+        Logger.info(
+          "#{download_path}: Have #{haves_count} out of #{total} pieces. #{have_nots_count} pieces remaining."
+        )
+
+        announce(state, "started")
+      end
 
     tick_refs = schedule_initial_ticks(state)
 
@@ -135,11 +151,9 @@ defmodule Bex.TorrentControllerWorker do
 
     active_downloads =
       active_downloads
-      |> IO.inspect(label: "active downloads pre")
       |> Enum.reject(fn {active_peer_id, i} ->
         active_peer_id == peer_id && i == index
       end)
-      |> IO.inspect(label: "active downloads post")
 
     state =
       state
@@ -324,6 +338,7 @@ defmodule Bex.TorrentControllerWorker do
 
       Enum.all?(pieces) ->
         Logger.debug("Download finished")
+        announce(state, "completed")
         {:noreply, state}
 
       true ->
