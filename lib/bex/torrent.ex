@@ -1,67 +1,45 @@
 defmodule Bex.Torrent do
   @moduledoc false
 
+  alias Bex.Metainfo
   require Logger
 
   def load(path) do
-    with {:ok, s} <- File.read(path),
-         {"", %{info: %{pieces: pieces} = info} = metainfo} <-
-           Bex.Bencode.decode(s, atom_keys: true) do
-      info_hash =
-        info
-        |> Bex.Bencode.encode()
-        |> hash()
-
-      piece_hashes =
-        for <<piece_hash::bytes-size(20) <- pieces>> do
-          piece_hash
-        end
-
-      have_pieces = Enum.map(1..Enum.count(piece_hashes), fn _ -> false end)
-
-      metainfo =
-        metainfo
-        |> Map.put(:decorated, %{})
-        |> Kernel.put_in([:decorated, :info_hash], info_hash)
-        |> Kernel.put_in([:decorated, :piece_hashes], piece_hashes)
-        |> Kernel.put_in([:decorated, :have_pieces], have_pieces)
-
-      {:ok, metainfo}
-    end
+    {:ok, s} = File.read(path)
+    Metainfo.from_string(s)
   end
 
-  def validate_existing_data(decorated_metainfo, download_path) do
+  def validate_existing_data(
+        %Bex.Metainfo{
+          decorated:
+            %Bex.Metainfo.Decorated{have_pieces: have_pieces, piece_hashes: piece_hashes} =
+              decorated,
+          info: %Bex.Metainfo.Info{"piece length": piece_length, length: length}
+        } = metainfo,
+        download_path
+      ) do
     if File.exists?(download_path) do
       Logger.debug("#{download_path} exists, validating")
 
       {:ok, file} = File.open(download_path, [:read])
 
-      updated =
-        Kernel.update_in(decorated_metainfo, [:decorated, :have_pieces], fn have_pieces ->
-          hashes_and_haves =
-            Enum.zip(
-              Kernel.get_in(decorated_metainfo, [:decorated, :piece_hashes]),
-              have_pieces
-            )
-
-          piece_length = Kernel.get_in(decorated_metainfo, [:info, :"piece length"])
-
-          hashes_and_haves
-          |> Enum.with_index()
-          |> Enum.map(fn {{hash, _have}, index} ->
-            hash_piece_from_file(file, index, piece_length) == hash
-          end)
+      have_pieces =
+        piece_hashes
+        |> Enum.zip(have_pieces)
+        |> Enum.with_index()
+        |> Enum.map(fn {{hash, _have}, index} ->
+          hash_piece_from_file(file, index, piece_length) == hash
         end)
+
+      metainfo = %{metainfo | decorated: %{decorated | have_pieces: have_pieces}}
 
       File.close(file)
 
-      updated
+      metainfo
     else
       Logger.debug("#{download_path} does not exist, initializing")
 
-      with {:ok, info} <- Map.fetch(decorated_metainfo, :info),
-           {:ok, length} <- Map.fetch(info, :length),
-           {:ok, file} <- :file.open(download_path, [:write]),
+      with {:ok, file} <- :file.open(download_path, [:write]),
            :ok <- :file.allocate(file, 0, length),
            :ok <- File.close(file) do
         Logger.debug("#{download_path} initialized")
@@ -70,7 +48,7 @@ defmodule Bex.Torrent do
           Logger.error(inspect(e))
       end
 
-      decorated_metainfo
+      metainfo
     end
   end
 
@@ -215,11 +193,29 @@ defmodule Bex.Torrent do
     |> :binary.list_to_bin()
   end
 
+  # for <<bit::size(1)-big <- bitfield>> do
+  #   bit
+  # end
+  # |> Enum.map(fn
+  #   1 -> true
+  #   0 -> false
+  # end)
+
   def bitfield_to_indexes(bitfield, length, piece_length) when is_binary(bitfield) do
     computed_number_of_pieces = (length / piece_length) |> Kernel.ceil()
 
-    for <<a::1, b::1, c::1, d::1, e::1, f::1, g::1, h::1 <- bitfield>> do
-      [a, b, c, d, e, f, g, h]
+    # for <<a::1, b::1, c::1, d::1, e::1, f::1, g::1, h::1 <- bitfield>> do
+    #   [a, b, c, d, e, f, g, h]
+    #   |> Enum.reverse()
+    #   |> Enum.map(fn
+    #     1 -> true
+    #     0 -> false
+    #   end)
+    # end
+    for <<byte::size(8)-big <- bitfield>> do
+      for <<bit::size(1)-big <- byte>> do
+        bit
+      end
       |> Enum.map(fn
         1 -> true
         0 -> false

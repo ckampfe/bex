@@ -72,10 +72,9 @@ defmodule Bex.TorrentControllerWorker do
   def handle_continue(
         :initialize,
         %{
-          metainfo: %{
-            announce: _announce_url,
-            decorated: %{info_hash: _info_hash, have_pieces: indexes},
-            info: %{length: _length}
+          metainfo: %Bex.Metainfo{
+            decorated: %Bex.Metainfo.Decorated{have_pieces: indexes}
+            # info: %Bex.Metainfo.Info{}
           },
           download_path: download_path,
           listening_port: _listening_port,
@@ -140,9 +139,10 @@ defmodule Bex.TorrentControllerWorker do
         {:have, peer_id, index},
         _from,
         %{
-          metainfo: %{
-            decorated: %{have_pieces: indexes}
-          },
+          metainfo:
+            %Bex.Metainfo{
+              decorated: %Bex.Metainfo.Decorated{have_pieces: indexes} = decorated
+            } = metainfo,
           active_downloads: active_downloads
         } = state
       ) do
@@ -156,8 +156,7 @@ defmodule Bex.TorrentControllerWorker do
       end)
 
     state =
-      state
-      |> Kernel.put_in([:metainfo, :decorated, :have_pieces], indexes)
+      %{state | metainfo: %{metainfo | decorated: %{decorated | have_pieces: indexes}}}
       |> Map.put(:active_downloads, active_downloads)
 
     {:reply, :ok, state}
@@ -413,10 +412,10 @@ defmodule Bex.TorrentControllerWorker do
         %{
           my_peer_id: my_peer_id,
           listening_port: listening_port,
-          metainfo: %{
+          metainfo: %Bex.Metainfo{
             announce: announce_url,
-            decorated: %{info_hash: info_hash, have_pieces: _indexes},
-            info: %{length: length}
+            decorated: %Bex.Metainfo.Decorated{info_hash: info_hash, have_pieces: _indexes},
+            info: %Bex.Metainfo.Info{length: length}
           }
         } = state,
         event \\ nil

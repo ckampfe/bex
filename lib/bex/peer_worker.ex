@@ -168,7 +168,7 @@ defmodule Bex.PeerWorker do
 
     Logger.debug("Chunks for #{index}: #{inspect(chunks)}")
 
-    outstanding_chunks =
+    these_outstanding_chunks =
       Enum.map(chunks, fn %{offset: offset, length: length} = chunk ->
         Logger.debug("Requesting chunk #{offset} for index #{index} from #{inspect(socket)}")
         :ok = Peer.send_request(socket, index, offset, length)
@@ -176,7 +176,12 @@ defmodule Bex.PeerWorker do
       end)
       |> Enum.into(MapSet.new())
 
-    state = Map.put(state, :outstanding_chunks, %{index => outstanding_chunks})
+    existing_outstanding_chunks = Map.get(state, :outstanding_chunks, %{})
+
+    existing_outstanding_chunks =
+      Map.put(existing_outstanding_chunks, index, these_outstanding_chunks)
+
+    state = Map.put(state, :outstanding_chunks, existing_outstanding_chunks)
 
     {:reply, :ok, state}
   end
@@ -194,9 +199,14 @@ defmodule Bex.PeerWorker do
            info_hash::bytes-size(20),
            remote_peer_id::bytes-size(20)
          >>},
-        %{socket: socket} = state
+        %{
+          socket: socket,
+          metainfo: %Bex.Metainfo{
+            decorated: %Bex.Metainfo.Decorated{info_hash: existing_info_hash}
+          }
+        } = state
       ) do
-    if info_hash == state[:metainfo][:decorated][:info_hash] do
+    if info_hash == existing_info_hash do
       Logger.debug("Received accurate handshake from #{inspect(remote_peer_id)}")
       peer_pid = self()
 
@@ -325,11 +335,19 @@ defmodule Bex.PeerWorker do
             outstanding_chunks_for_index =
               Map.get_lazy(outstanding_chunks, index, fn -> MapSet.new() end)
 
+            Logger.info(
+              "Outstanding chunks for index #{index} pre: #{inspect(outstanding_chunks_for_index)}"
+            )
+
             outstanding_chunks_for_index =
               MapSet.delete(outstanding_chunks_for_index, %{
                 offset: begin,
                 length: byte_size(chunk)
               })
+
+            Logger.info(
+              "Outstanding chunks for index #{index} post: #{inspect(outstanding_chunks_for_index)}"
+            )
 
             outstanding_chunks = Map.put(outstanding_chunks, index, outstanding_chunks_for_index)
 

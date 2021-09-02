@@ -15,16 +15,16 @@ defmodule Bex do
     application_global_config = Application.get_all_env(:bex)
 
     # default_options() <- application global config <- passed_in per torrent
-    options =
+    torrent_options =
       default_options()
       |> Keyword.merge(application_global_config)
       |> Keyword.merge(options)
       |> Enum.into(%{})
       |> Map.merge(%{metainfo: metainfo, download_path: download_path})
 
-    {:ok, _} = Bex.AllSupervisor.start_child(options)
+    {:ok, _} = Bex.AllSupervisor.start_child(torrent_options)
 
-    %{metainfo: %{decorated: %{info_hash: info_hash}}} = options
+    %{metainfo: %{decorated: %{info_hash: info_hash}}} = torrent_options
 
     info_hash_as_hex = Base.encode16(info_hash)
 

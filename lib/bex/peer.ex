@@ -4,6 +4,16 @@ defmodule Bex.Peer do
   alias Bex.{PeerSupervisor, Torrent}
   require Logger
 
+  @choke 0
+  @unchoke 1
+  @interested 2
+  @not_interested 3
+  @have 4
+  @bitfield 5
+  @request 6
+  @piece 7
+  @cancel 8
+
   ### SEND
 
   def connect_and_initialize(%{peer_id: peer_id, ip: ip, port: port} = _peer, state) do
@@ -66,36 +76,36 @@ defmodule Bex.Peer do
   end
 
   def send_choke(socket) do
-    send_message(socket, <<0>>)
+    send_message(socket, <<@choke>>)
   end
 
   def send_unchoke(socket) do
-    send_message(socket, <<1>>)
+    send_message(socket, <<@unchoke>>)
   end
 
   def send_interested(socket) do
-    send_message(socket, <<2>>)
+    send_message(socket, <<@interested>>)
   end
 
   def send_not_interested(socket) do
-    send_message(socket, <<3>>)
+    send_message(socket, <<@not_interested>>)
   end
 
   def send_have(socket, index) do
     encoded_index = Torrent.encode_number(index)
-    send_message(socket, [4, encoded_index])
+    send_message(socket, [@have, encoded_index])
   end
 
   def send_bitfield(socket, indexes) do
     bitfield = Torrent.indexes_to_bitfield(indexes)
-    send_message(socket, [5, bitfield])
+    send_message(socket, [@bitfield, bitfield])
   end
 
   def send_request(socket, index, begin, length) do
     send_message(
       socket,
       [
-        6,
+        @request,
         Torrent.encode_number(index),
         Torrent.encode_number(begin),
         Torrent.encode_number(length)
@@ -104,14 +114,19 @@ defmodule Bex.Peer do
   end
 
   def send_piece(socket, index, begin, piece) do
-    send_message(socket, [7, Torrent.encode_number(index), Torrent.encode_number(begin), piece])
+    send_message(socket, [
+      @piece,
+      Torrent.encode_number(index),
+      Torrent.encode_number(begin),
+      piece
+    ])
   end
 
   def send_cancel(socket, index, begin, length) do
     send_message(
       socket,
       [
-        8,
+        @cancel,
         Torrent.encode_number(index),
         Torrent.encode_number(begin),
         Torrent.encode_number(length)
@@ -157,5 +172,13 @@ defmodule Bex.Peer do
       <<>> ->
         %{type: :keepalive}
     end
+  end
+
+  def generate_peer_id() do
+    header = "-BEX001-"
+    header_length = String.length(header)
+    random_bytes = :rand.bytes(100) |> Base.encode64()
+    bytes_to_take = 20 - header_length - 1
+    header <> String.slice(random_bytes, 0..bytes_to_take)
   end
 end
