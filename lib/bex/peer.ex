@@ -1,7 +1,7 @@
 defmodule Bex.Peer do
   @moduledoc false
 
-  alias Bex.{PeerSupervisor, Torrent}
+  alias Bex.{PeerSupervisor, Torrent, Bitfield}
   require Logger
 
   @choke 0
@@ -96,8 +96,8 @@ defmodule Bex.Peer do
     send_message(socket, [@have, encoded_index])
   end
 
-  def send_bitfield(socket, indexes) do
-    bitfield = Torrent.indexes_to_bitfield(indexes)
+  def send_bitfield(socket, %Bitfield{} = bitfield) do
+    bitfield = Bitfield.to_binary(bitfield)
     send_message(socket, [@bitfield, bitfield])
   end
 

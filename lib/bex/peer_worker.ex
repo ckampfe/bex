@@ -2,7 +2,7 @@ defmodule Bex.PeerWorker do
   @moduledoc false
 
   use GenServer, restart: :transient
-  alias Bex.{Peer, TorrentControllerWorker, Torrent}
+  alias Bex.{Peer, TorrentControllerWorker, Torrent, Bitfield}
 
   require Logger
 
@@ -302,9 +302,9 @@ defmodule Bex.PeerWorker do
         :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
         {:noreply, state}
 
-      %{type: :bitfield, bitfield: bitfield} ->
-        peer_indexes = Torrent.bitfield_to_indexes(bitfield, length, piece_length)
-        state = Map.put(state, :peer_indexes, peer_indexes)
+      %{type: :bitfield, bitfield: bitfield_binary} ->
+        peer_bitfield = Bitfield.from_binary(bitfield_binary, length(piece_hashes))
+        state = Map.put(state, :peer_bitfield, peer_bitfield)
         Logger.debug("Received and stored bitfield from #{inspect(socket)}")
         :ok = active_once(socket)
         {:noreply, state}
@@ -423,8 +423,8 @@ defmodule Bex.PeerWorker do
           remote_peer_id: remote_peer_id
         } = state
       ) do
-    if state[:peer_indexes] do
-      TorrentControllerWorker.peer_checkin(info_hash, remote_peer_id, state[:peer_indexes])
+    if state[:peer_bitfield] do
+      TorrentControllerWorker.peer_checkin(info_hash, remote_peer_id, state[:peer_bitfield])
     end
 
     schedule_controller_checkin(peer_checkin_tick)

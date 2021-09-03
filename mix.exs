@@ -23,7 +23,8 @@ defmodule Bex.MixProject do
   defp deps do
     [
       {:bimap, "~> 1.2"},
-      {:httpoison, "~> 1.0"}
+      {:httpoison, "~> 1.0"},
+      {:mix_test_watch, "~> 1.0", only: :dev, runtime: false}
     ]
   end
 end

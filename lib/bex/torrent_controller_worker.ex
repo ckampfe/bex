@@ -5,7 +5,7 @@ defmodule Bex.TorrentControllerWorker do
 
   require Logger
 
-  alias Bex.{PeerWorker, Peer}
+  alias Bex.{PeerWorker, Peer, Bitfield}
 
   ### PUBLIC API
 
@@ -24,9 +24,9 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, {:add_peer, peer_id, peer_pid})
   end
 
-  def peer_checkin(info_hash, peer_id, peer_indexes) do
+  def peer_checkin(info_hash, peer_id, peer_bitfield) do
     name = via_tuple(info_hash)
-    GenServer.call(name, {:peer_checkin, peer_id, peer_indexes})
+    GenServer.call(name, {:peer_checkin, peer_id, peer_bitfield})
   end
 
   def have(info_hash, peer_id, index) do
@@ -178,7 +178,7 @@ defmodule Bex.TorrentControllerWorker do
   end
 
   def handle_call(
-        {:peer_checkin, peer_id, peer_indexes},
+        {:peer_checkin, peer_id, peer_bitfield},
         {from_pid, _tag} = _from,
         %{available_piece_sets: _piece_peer_sets} = state
       ) do
@@ -187,7 +187,7 @@ defmodule Bex.TorrentControllerWorker do
     state =
       Map.update!(state, :available_piece_sets, fn available_piece_sets ->
         available_piece_sets
-        |> Enum.zip(peer_indexes)
+        |> Enum.zip(Bitfield.to_list(peer_bitfield))
         |> Enum.map(fn {piece_set, peer_has?} ->
           if peer_has? do
             MapSet.put(piece_set, peer_id)
