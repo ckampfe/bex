@@ -1,5 +1,5 @@
 defmodule Bex.Metainfo do
-  alias Bex.{Bencode, Torrent}
+  alias Bex.{Bencode, Torrent, Bitfield}
 
   defstruct [:announce, :"created by", :"creation date", :encoding, :info, :decorated]
 
@@ -27,13 +27,16 @@ defmodule Bex.Metainfo do
           piece_hash
         end
 
-      have_pieces = Enum.map(1..Enum.count(piece_hashes), fn _ -> false end)
+      bitfield =
+        piece_hashes
+        |> Enum.count()
+        |> Bitfield.new()
 
       decorated =
         %{}
         |> Map.put(:info_hash, info_hash)
         |> Map.put(:piece_hashes, piece_hashes)
-        |> Map.put(:have_pieces, have_pieces)
+        |> Map.put(:have_pieces, bitfield)
         |> then(fn decorated ->
           Kernel.struct(Decorated, decorated)
         end)

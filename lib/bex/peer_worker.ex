@@ -2,7 +2,7 @@ defmodule Bex.PeerWorker do
   @moduledoc false
 
   use GenServer, restart: :transient
-  alias Bex.{Peer, TorrentControllerWorker, Torrent, Bitfield}
+  alias Bex.{Peer, TorrentControllerWorker, Torrent, Bitfield, Metainfo}
 
   require Logger
 
@@ -49,7 +49,7 @@ defmodule Bex.PeerWorker do
   def handle_continue(
         :setup,
         %{
-          metainfo: %{decorated: %{info_hash: info_hash}},
+          metainfo: %Metainfo{decorated: %Metainfo.Decorated{info_hash: info_hash}},
           socket: socket,
           my_peer_id: my_peer_id
         } = state
@@ -75,7 +75,9 @@ defmodule Bex.PeerWorker do
   def handle_continue(
         :post_handshake,
         %{
-          metainfo: %{decorated: %{have_pieces: have_pieces}},
+          metainfo: %Metainfo{
+            decorated: %Metainfo.Decorated{have_pieces: %Bitfield{} = have_pieces}
+          },
           socket: socket,
           choked: choked,
           interested: interested
@@ -83,7 +85,7 @@ defmodule Bex.PeerWorker do
       ) do
     handle_info(:keepalive, state)
 
-    if Enum.any?(have_pieces) do
+    if Bitfield.any_set?(have_pieces) do
       Logger.debug("Have >0 pieces, sending bitfield to #{inspect(socket)}")
       Peer.send_bitfield(socket, have_pieces)
     else
@@ -236,7 +238,7 @@ defmodule Bex.PeerWorker do
         %{
           metainfo: %{
             decorated: %{info_hash: info_hash, piece_hashes: piece_hashes},
-            info: %{"piece length": piece_length, length: length}
+            info: %{"piece length": piece_length, length: _length}
           },
           socket: socket,
           download_path: download_path,

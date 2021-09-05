@@ -5,7 +5,7 @@ defmodule Bex.TorrentControllerWorker do
 
   require Logger
 
-  alias Bex.{PeerWorker, Peer, Bitfield}
+  alias Bex.{PeerWorker, Peer, Bitfield, Metainfo, Metainfo.Decorated, Torrent}
 
   ### PUBLIC API
 
@@ -54,6 +54,11 @@ defmodule Bex.TorrentControllerWorker do
     GenServer.call(name, :pause_ticks)
   end
 
+  def actual_listening_port(info_hash, port) do
+    name = via_tuple(info_hash)
+    GenServer.call(name, {:actual_listening_port, port})
+  end
+
   def shutdown_peers(info_hash) do
     multicall(info_hash, {PeerWorker, :shutdown, []})
   end
@@ -72,11 +77,9 @@ defmodule Bex.TorrentControllerWorker do
   def handle_continue(
         :initialize,
         %{
-          metainfo: %Bex.Metainfo{
-            decorated: %Bex.Metainfo.Decorated{have_pieces: indexes}
-            # info: %Bex.Metainfo.Info{}
-          },
+          metainfo: %Bex.Metainfo{} = metainfo,
           download_path: download_path,
+          torrent_file_path: torrent_file_path,
           listening_port: _listening_port,
           my_peer_id: _my_peer_id,
           announce_tick: _,
@@ -84,21 +87,28 @@ defmodule Bex.TorrentControllerWorker do
           downloads_tick: _
         } = state
       ) do
+    %Metainfo{decorated: %Metainfo.Decorated{have_pieces: have_pieces}} =
+      metainfo = Torrent.validate_existing_data(metainfo, download_path)
+
+    Logger.debug("Validated #{torrent_file_path} #{download_path}")
+
     state =
       state
       # %{peer_id -> pid}
       |> Map.put(:peers, BiMap.new())
       |> Map.put(
         :available_piece_sets,
-        Enum.map(indexes, fn _ ->
+        have_pieces
+        |> Bitfield.to_list()
+        |> Enum.map(fn _ ->
           MapSet.new()
         end)
       )
       |> Map.put(:active_downloads, [])
+      |> Map.put(:metainfo, metainfo)
 
-    {haves, have_nots} = Enum.split_with(indexes, fn have? -> have? end)
-    haves_count = Enum.count(haves)
-    have_nots_count = Enum.count(have_nots)
+    haves_count = Bitfield.set_count(have_pieces)
+    have_nots_count = Bitfield.unset_count(have_pieces)
     total = haves_count + have_nots_count
 
     state =
@@ -140,14 +150,14 @@ defmodule Bex.TorrentControllerWorker do
         _from,
         %{
           metainfo:
-            %Bex.Metainfo{
-              decorated: %Bex.Metainfo.Decorated{have_pieces: indexes} = decorated
+            %Metainfo{
+              decorated: %Metainfo.Decorated{have_pieces: have_pieces} = decorated
             } = metainfo,
           active_downloads: active_downloads
         } = state
       ) do
     # update haves
-    indexes = List.replace_at(indexes, index, true)
+    have_pieces = Bitfield.set(have_pieces, index)
 
     active_downloads =
       active_downloads
@@ -156,7 +166,7 @@ defmodule Bex.TorrentControllerWorker do
       end)
 
     state =
-      %{state | metainfo: %{metainfo | decorated: %{decorated | have_pieces: indexes}}}
+      %{state | metainfo: %{metainfo | decorated: %{decorated | have_pieces: have_pieces}}}
       |> Map.put(:active_downloads, active_downloads)
 
     {:reply, :ok, state}
@@ -203,10 +213,12 @@ defmodule Bex.TorrentControllerWorker do
   def handle_call(
         :get_not_haves,
         _from,
-        %{metainfo: %{decorated: %{have_pieces: pieces}}} = state
+        %{metainfo: %{decorated: %{have_pieces: have_pieces}}} = state
       ) do
     reply =
-      Enum.with_index(pieces)
+      have_pieces
+      |> Bitfield.to_list()
+      |> Enum.with_index()
       |> Enum.flat_map(fn {have?, index} ->
         if !have? do
           [index]
@@ -243,12 +255,21 @@ defmodule Bex.TorrentControllerWorker do
     {:reply, :ok, state}
   end
 
+  def handle_call(
+        {:actual_listening_port, port},
+        _from,
+        state
+      ) do
+    state = Map.put(state, :listening_port, port)
+    {:reply, :ok, state}
+  end
+
   def handle_info(
         :announce,
         %{
-          metainfo: %{
+          metainfo: %Metainfo{
             announce: _announce_url,
-            decorated: %{info_hash: _info_hash},
+            decorated: %Decorated{info_hash: _info_hash},
             info: %{length: _length}
           },
           listening_port: _listening_port,
@@ -268,7 +289,7 @@ defmodule Bex.TorrentControllerWorker do
   def handle_info(
         :update_interest_states,
         %{
-          metainfo: %{decorated: %{have_pieces: indexes}},
+          metainfo: %Metainfo{decorated: %Decorated{have_pieces: %Bitfield{} = have_pieces}},
           available_piece_sets: available_piece_sets,
           interest_tick: controller_interest_tick,
           peers: peers
@@ -279,7 +300,8 @@ defmodule Bex.TorrentControllerWorker do
     # 2. those who do not have a piece we need
 
     {_not_interested, interested_peers} =
-      indexes
+      have_pieces
+      |> Bitfield.to_list()
       |> Enum.zip(available_piece_sets)
       |> Enum.split_with(fn {have?, _peers_who_have} ->
         have?
@@ -322,7 +344,7 @@ defmodule Bex.TorrentControllerWorker do
   def handle_info(
         :downloads,
         %{
-          metainfo: %{decorated: %{have_pieces: pieces}},
+          metainfo: %Metainfo{decorated: %Decorated{have_pieces: %Bitfield{} = have_pieces}},
           peers: peers,
           # active_downloads: active_downloads,
           downloads_tick: controller_downloads_tick,
@@ -335,13 +357,13 @@ defmodule Bex.TorrentControllerWorker do
         schedule_downloads(controller_downloads_tick)
         {:noreply, state}
 
-      Enum.all?(pieces) ->
+      Bitfield.all?(have_pieces) ->
         Logger.debug("Download finished")
         announce(state, "completed")
         {:noreply, state}
 
       true ->
-        case random_unhad_available_peer_pieces(pieces, available_piece_sets, 4) do
+        case random_unhad_available_peer_pieces(have_pieces, available_piece_sets, 4) do
           # [{peer_id, index}]
           {:ok, peer_id_pieces} ->
             peer_id_pieces
@@ -512,7 +534,7 @@ defmodule Bex.TorrentControllerWorker do
 
   def random_unhad_available_peer_pieces(pieces, peer_sets, n) when n > 0 do
     cond do
-      Enum.all?(pieces, fn have? -> have? end) ->
+      Bitfield.all?(pieces) ->
         :have_all_pieces
 
       Enum.all?(peer_sets, fn peer_set -> Enum.empty?(peer_set) end) ->
@@ -521,6 +543,7 @@ defmodule Bex.TorrentControllerWorker do
       true ->
         unhad_available_pieces =
           pieces
+          |> Bitfield.to_list()
           |> Enum.zip(peer_sets)
           |> Enum.with_index(fn {have?, peer_set}, index ->
             {have?, peer_set, index}

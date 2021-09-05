@@ -4,10 +4,18 @@ defmodule Bex.PeerAcceptor do
   use GenServer
   require Logger
 
-  alias Bex.Peer
+  alias Bex.{Peer, TorrentControllerWorker, Metainfo, Bitfield}
 
   def start_link(
-        %{metainfo: %{decorated: %{info_hash: info_hash}}, listening_port: port} = options
+        %{
+          metainfo: %Metainfo{
+            decorated: %Metainfo.Decorated{
+              info_hash: info_hash,
+              have_pieces: %Bitfield{} = _have_pieces
+            }
+          },
+          listening_port: port
+        } = options
       ) do
     name = via_tuple(info_hash)
     Logger.debug("Starting #{inspect(name)} on port #{port}")
@@ -25,11 +33,25 @@ defmodule Bex.PeerAcceptor do
 
   def handle_continue(
         :listen,
-        %{listening_port: listening_port} = state
+        %{
+          metainfo: %Metainfo{
+            decorated: %Metainfo.Decorated{
+              info_hash: info_hash,
+              have_pieces: %Bitfield{} = _have_pieces
+            }
+          },
+          listening_port: listening_port
+        } = state
       ) do
     {:ok, listen_socket, actual_listening_port} = listen_on_port(listening_port)
 
     Logger.debug("TCP socket listening on port #{actual_listening_port}")
+
+    TorrentControllerWorker.actual_listening_port(info_hash, actual_listening_port)
+
+    Logger.debug(
+      "Updated TorrentControllerWorker with actual listening port #{actual_listening_port}"
+    )
 
     state =
       state

@@ -1,7 +1,7 @@
 defmodule Bex.Peer do
   @moduledoc false
 
-  alias Bex.{PeerSupervisor, Torrent, Bitfield}
+  alias Bex.{PeerSupervisor, Torrent, Bitfield, Metainfo}
   require Logger
 
   @choke 0
@@ -31,7 +31,7 @@ defmodule Bex.Peer do
   def initialize_peer(
         socket,
         %{
-          metainfo: %{decorated: %{info_hash: info_hash}}
+          metainfo: %Metainfo{decorated: %Metainfo.Decorated{info_hash: info_hash}}
         } = state
       ) do
     Logger.debug("TCP socket #{inspect(socket)} accepted, starting child process to handle")

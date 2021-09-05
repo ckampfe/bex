@@ -1,7 +1,7 @@
 defmodule Bex.Torrent do
   @moduledoc false
 
-  alias Bex.Metainfo
+  alias Bex.{Metainfo, Bitfield}
   require Logger
 
   def load(path) do
@@ -10,10 +10,12 @@ defmodule Bex.Torrent do
   end
 
   def validate_existing_data(
-        %Bex.Metainfo{
+        %Metainfo{
           decorated:
-            %Bex.Metainfo.Decorated{have_pieces: have_pieces, piece_hashes: piece_hashes} =
-              decorated,
+            %Metainfo.Decorated{
+              have_pieces: %Bitfield{} = have_pieces,
+              piece_hashes: piece_hashes
+            } = decorated,
           info: %Bex.Metainfo.Info{"piece length": piece_length, length: length}
         } = metainfo,
         download_path
@@ -25,10 +27,13 @@ defmodule Bex.Torrent do
 
       have_pieces =
         piece_hashes
-        |> Enum.zip(have_pieces)
         |> Enum.with_index()
-        |> Enum.map(fn {{hash, _have}, index} ->
-          hash_piece_from_file(file, index, piece_length) == hash
+        |> Enum.reduce(have_pieces, fn {hash, index}, bitfield ->
+          if hash_piece_from_file(file, index, piece_length) == hash do
+            Bitfield.set(bitfield, index)
+          else
+            bitfield
+          end
         end)
 
       metainfo = %{metainfo | decorated: %{decorated | have_pieces: have_pieces}}

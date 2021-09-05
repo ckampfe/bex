@@ -1,6 +1,14 @@
 defmodule Bex do
   require Logger
-  alias Bex.{Torrent, PeerAcceptor, TorrentControllerWorker, TorrentSupervisor}
+
+  alias Bex.{
+    Torrent,
+    PeerAcceptor,
+    TorrentControllerWorker,
+    TorrentSupervisor,
+    Metainfo,
+    Bitfield
+  }
 
   def add_torrent(
         torrent_file_path,
@@ -9,8 +17,6 @@ defmodule Bex do
       ) do
     {:ok, metainfo} = Torrent.load(torrent_file_path)
     Logger.debug("Loaded torrent from #{torrent_file_path}")
-    metainfo = Torrent.validate_existing_data(metainfo, download_path)
-    Logger.debug("Validated #{torrent_file_path} #{download_path}")
 
     application_global_config = Application.get_all_env(:bex)
 
@@ -20,11 +26,22 @@ defmodule Bex do
       |> Keyword.merge(application_global_config)
       |> Keyword.merge(options)
       |> Enum.into(%{})
-      |> Map.merge(%{metainfo: metainfo, download_path: download_path})
+      |> Map.merge(%{
+        metainfo: metainfo,
+        download_path: download_path,
+        torrent_file_path: torrent_file_path
+      })
+
+    %{
+      metainfo: %Metainfo{
+        decorated: %Metainfo.Decorated{
+          info_hash: info_hash,
+          have_pieces: %Bitfield{} = _have_pieces
+        }
+      }
+    } = torrent_options
 
     {:ok, _} = Bex.AllSupervisor.start_child(torrent_options)
-
-    %{metainfo: %{decorated: %{info_hash: info_hash}}} = torrent_options
 
     info_hash_as_hex = Base.encode16(info_hash)
 
