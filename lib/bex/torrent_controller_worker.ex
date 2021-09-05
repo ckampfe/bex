@@ -363,7 +363,7 @@ defmodule Bex.TorrentControllerWorker do
         {:noreply, state}
 
       true ->
-        case random_unhad_available_peer_pieces(have_pieces, available_piece_sets, 4) do
+        case random_unhad_available_peer_pieces(have_pieces, available_piece_sets, 16) do
           # [{peer_id, index}]
           {:ok, peer_id_pieces} ->
             peer_id_pieces

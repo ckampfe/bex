@@ -88,7 +88,7 @@ defmodule Bex do
       peer_keepalive_tick: :timer.minutes(1),
       announce_tick: :timer.minutes(1),
       interest_tick: :timer.seconds(15),
-      downloads_tick: :timer.seconds(5)
+      downloads_tick: :timer.seconds(1)
     ]
   end
 end
