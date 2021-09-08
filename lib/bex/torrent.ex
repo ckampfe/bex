@@ -30,7 +30,7 @@ defmodule Bex.Torrent do
         |> Enum.with_index()
         |> Enum.reduce(have_pieces, fn {hash, index}, bitfield ->
           if hash_piece_from_file(file, index, piece_length) == hash do
-            Bitfield.set(bitfield, index)
+            BitArray.set(bitfield, index)
           else
             bitfield
           end

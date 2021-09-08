@@ -30,7 +30,7 @@ defmodule Bex.Metainfo do
       bitfield =
         piece_hashes
         |> Enum.count()
-        |> Bitfield.new()
+        |> BitArray.new()
 
       decorated =
         %{}
