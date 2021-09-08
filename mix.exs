@@ -23,7 +23,7 @@ defmodule Bex.MixProject do
   defp deps do
     [
       {:bimap, "~> 1.2"},
-      {:bitfield, path: "/home/clark/code/personal/bitfield"},
+      {:bitarray, path: "/home/clark/code/personal/bitarray"},
       {:httpoison, "~> 1.0"},
       {:mix_test_watch, "~> 1.0", only: :dev, runtime: false}
     ]

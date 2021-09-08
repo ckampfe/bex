@@ -13,7 +13,7 @@ defmodule Bex.Torrent do
         %Metainfo{
           decorated:
             %Metainfo.Decorated{
-              have_pieces: %Bitfield{} = have_pieces,
+              have_pieces: %BitArray{} = have_pieces,
               piece_hashes: piece_hashes
             } = decorated,
           info: %Bex.Metainfo.Info{"piece length": piece_length, length: length}

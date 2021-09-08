@@ -76,7 +76,7 @@ defmodule Bex.PeerWorker do
         :post_handshake,
         %{
           metainfo: %Metainfo{
-            decorated: %Metainfo.Decorated{have_pieces: %Bitfield{} = have_pieces}
+            decorated: %Metainfo.Decorated{have_pieces: %BitArray{} = have_pieces}
           },
           socket: socket,
           choked: choked,
@@ -85,7 +85,7 @@ defmodule Bex.PeerWorker do
       ) do
     handle_info(:keepalive, state)
 
-    if Bitfield.any_set?(have_pieces) do
+    if BitArray.any_set?(have_pieces) do
       Logger.debug("Have >0 pieces, sending bitfield to #{inspect(socket)}")
       Peer.send_bitfield(socket, have_pieces)
     else
@@ -305,7 +305,7 @@ defmodule Bex.PeerWorker do
         {:noreply, state}
 
       %{type: :bitfield, bitfield: bitfield_binary} ->
-        peer_bitfield = Bitfield.from_binary(bitfield_binary, length(piece_hashes))
+        peer_bitfield = BitArray.from_binary(bitfield_binary, length(piece_hashes))
         state = Map.put(state, :peer_bitfield, peer_bitfield)
         Logger.debug("Received and stored bitfield from #{inspect(socket)}")
         :ok = active_once(socket)

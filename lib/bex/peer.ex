@@ -96,8 +96,8 @@ defmodule Bex.Peer do
     send_message(socket, [@have, encoded_index])
   end
 
-  def send_bitfield(socket, %Bitfield{} = bitfield) do
-    bitfield = Bitfield.to_binary(bitfield)
+  def send_bitfield(socket, %BitArray{} = bitfield) do
+    bitfield = BitArray.to_binary(bitfield)
     send_message(socket, [@bitfield, bitfield])
   end
 

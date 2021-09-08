@@ -35,7 +35,7 @@ defmodule Bex do
       metainfo: %Metainfo{
         decorated: %Metainfo.Decorated{
           info_hash: info_hash,
-          have_pieces: %Bitfield{} = _have_pieces
+          have_pieces: %BitArray{} = _have_pieces
         }
       }
     } = torrent_options
