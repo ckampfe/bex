@@ -6,8 +6,7 @@ defmodule Bex do
     PeerAcceptor,
     TorrentControllerWorker,
     TorrentSupervisor,
-    Metainfo,
-    Bitfield
+    Metainfo
   }
 
   def add_torrent(

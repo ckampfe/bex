@@ -1,5 +1,5 @@
 defmodule Bex.Metainfo do
-  alias Bex.{Bencode, Torrent, Bitfield}
+  alias Bex.{Bencode, Torrent}
 
   defstruct [:announce, :"created by", :"creation date", :encoding, :info, :decorated]
 

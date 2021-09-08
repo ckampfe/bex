@@ -2,7 +2,7 @@ defmodule Bex.PeerWorker do
   @moduledoc false
 
   use GenServer, restart: :transient
-  alias Bex.{Peer, TorrentControllerWorker, Torrent, Bitfield, Metainfo}
+  alias Bex.{Peer, TorrentControllerWorker, Torrent, Metainfo}
 
   require Logger
 

@@ -5,7 +5,7 @@ defmodule Bex.TorrentControllerWorker do
 
   require Logger
 
-  alias Bex.{PeerWorker, Peer, Bitfield, Metainfo, Metainfo.Decorated, Torrent}
+  alias Bex.{PeerWorker, Peer, Metainfo, Metainfo.Decorated, Torrent}
 
   ### PUBLIC API
 

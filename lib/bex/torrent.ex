@@ -1,7 +1,7 @@
 defmodule Bex.Torrent do
   @moduledoc false
 
-  alias Bex.{Metainfo, Bitfield}
+  alias Bex.Metainfo
   require Logger
 
   def load(path) do
