@@ -2,7 +2,7 @@ defmodule Bex.PeerWorker do
   @moduledoc false
 
   use GenServer, restart: :transient
-  alias Bex.{Peer, TorrentControllerWorker, Torrent, Metainfo}
+  alias Bex.{BitArray, Peer, TorrentControllerWorker, Torrent, Metainfo}
 
   require Logger
 
@@ -85,7 +85,7 @@ defmodule Bex.PeerWorker do
       ) do
     handle_info(:keepalive, state)
 
-    if BitArray.any_set?(have_pieces) do
+    if BitArray.any?(have_pieces) do
       Logger.debug("Have >0 pieces, sending bitfield to #{inspect(socket)}")
       Peer.send_bitfield(socket, have_pieces)
     else

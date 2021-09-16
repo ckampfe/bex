@@ -2,6 +2,7 @@ defmodule Bex do
   require Logger
 
   alias Bex.{
+    BitArray,
     Torrent,
     PeerAcceptor,
     TorrentControllerWorker,

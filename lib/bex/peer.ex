@@ -1,7 +1,7 @@
 defmodule Bex.Peer do
   @moduledoc false
 
-  alias Bex.{PeerSupervisor, Torrent, Metainfo}
+  alias Bex.{BitArray, PeerSupervisor, Torrent, Metainfo}
   require Logger
 
   @choke 0

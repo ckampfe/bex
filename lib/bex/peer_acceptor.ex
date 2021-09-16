@@ -4,7 +4,7 @@ defmodule Bex.PeerAcceptor do
   use GenServer
   require Logger
 
-  alias Bex.{Peer, TorrentControllerWorker, Metainfo}
+  alias Bex.{BitArray, Peer, TorrentControllerWorker, Metainfo}
 
   def start_link(
         %{

@@ -23,7 +23,6 @@ defmodule Bex.MixProject do
   defp deps do
     [
       {:bimap, "~> 1.2"},
-      {:bitarray, git: "https://github.com/ckampfe/bitarray.git"},
       {:httpoison, "~> 1.0"},
       {:mix_test_watch, "~> 1.0", only: :dev, runtime: false}
     ]
