@@ -63,7 +63,12 @@ defmodule Bex.PeerWorker do
 
     schedule_controller_checkin(checkin_tick)
 
-    :ok = Peer.send_handshake(socket, info_hash, my_peer_id)
+    :ok =
+      Peer.send_message(socket, %Peer.Message.Handshake{
+        info_hash: info_hash,
+        peer_id: my_peer_id,
+        extension_bytes: [0, 0, 0, 0, 0, 0, 0, 0]
+      })
 
     :ok = active_once(socket)
 
@@ -87,21 +92,21 @@ defmodule Bex.PeerWorker do
 
     if BitArray.any?(have_pieces) do
       Logger.debug("Have >0 pieces, sending bitfield to #{inspect(socket)}")
-      Peer.send_bitfield(socket, have_pieces)
+      Peer.send_message(socket, %Peer.Message.Bitfield{bitfield: have_pieces})
     else
       Logger.debug("Do not have any pieces, not sending bitfield to #{inspect(socket)}")
     end
 
     if choked do
-      Peer.send_choke(socket)
+      Peer.send_message(socket, %Peer.Message.Choke{})
     else
-      Peer.send_unchoke(socket)
+      Peer.send_message(socket, %Peer.Message.Unchoke{})
     end
 
     if interested do
-      Peer.send_interested(socket)
+      Peer.send_message(socket, %Peer.Message.Interested{})
     else
-      Peer.send_not_interested(socket)
+      Peer.send_message(socket, %Peer.Message.NotInterested{})
     end
 
     {:noreply, state}
@@ -115,7 +120,7 @@ defmodule Bex.PeerWorker do
   def handle_call(:interested, _from, %{socket: socket} = state) do
     state =
       if !state[:interested] do
-        :ok = Peer.send_interested(socket)
+        :ok = Peer.send_message(socket, %Peer.Message.Interested{})
         Logger.debug("Let peer #{inspect(socket)} know we're interested")
         Map.put(state, :interested, true)
       else
@@ -129,7 +134,7 @@ defmodule Bex.PeerWorker do
   def handle_call(:not_interested, _from, %{socket: socket} = state) do
     state =
       if state[:interested] do
-        :ok = Peer.send_not_interested(socket)
+        :ok = Peer.send_message(socket, %Peer.Message.NotInterested{})
         Logger.debug("Let peer #{inspect(socket)} know we're not interested")
         Map.put(state, :interested, false)
       else
@@ -142,13 +147,13 @@ defmodule Bex.PeerWorker do
 
   def handle_call(:choke, _from, %{socket: socket} = state) do
     state = Map.put(state, :choked, true)
-    :ok = Peer.send_choke(socket)
+    :ok = Peer.send_message(socket, %Peer.Message.Choke{})
     {:reply, :ok, state}
   end
 
   def handle_call(:unchoke, _from, %{socket: socket} = state) do
     state = Map.put(state, :choked, false)
-    :ok = Peer.send_unchoke(socket)
+    :ok = Peer.send_message(socket, %Peer.Message.Unchoke{})
     Logger.debug("Unchoking #{inspect(socket)}")
     {:reply, :ok, state}
   end
@@ -171,9 +176,16 @@ defmodule Bex.PeerWorker do
     Logger.debug("Chunks for #{index}: #{inspect(chunks)}")
 
     these_outstanding_chunks =
-      Enum.map(chunks, fn %{offset: offset, length: length} = chunk ->
+      Enum.map(chunks, fn %Chunk{offset_within_piece: offset, length: length} = chunk ->
         Logger.debug("Requesting chunk #{offset} for index #{index} from #{inspect(socket)}")
-        :ok = Peer.send_request(socket, index, offset, length)
+
+        :ok =
+          Peer.send_message(socket, %Peer.Message.Request{
+            index: index,
+            begin: offset,
+            length: length
+          })
+
         chunk
       end)
       |> Enum.into(MapSet.new())
@@ -246,13 +258,13 @@ defmodule Bex.PeerWorker do
         } = state
       ) do
     case Peer.Message.parse(rest) do
-      %{type: :choke} ->
+      %Peer.Message.Choke{} ->
         Logger.debug("Received choke from #{inspect(socket)}, choked them")
 
         state =
           if !state[:choked] do
             state = Map.put(state, :choked, true)
-            :ok = Peer.send_choke(socket)
+            :ok = Peer.send_message(socket, %Peer.Message.Choke{})
             Logger.debug("Choked #{inspect(socket)})")
             state
           else
@@ -262,13 +274,13 @@ defmodule Bex.PeerWorker do
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :unchoke} ->
+      %Peer.Message.Unchoke{} ->
         Logger.debug("Received unchoke from #{inspect(socket)}, unchoked them")
 
         state =
           if state[:choked] do
             state = Map.put(state, :choked, false)
-            :ok = Peer.send_unchoke(socket)
+            :ok = Peer.send_message(socket, %Peer.Message.Unchoke{})
             Logger.debug("Unchoked #{inspect(socket)}")
             state
           else
@@ -278,13 +290,13 @@ defmodule Bex.PeerWorker do
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :interested} ->
+      %Peer.Message.Interested{} ->
         Logger.debug("Received interested from #{inspect(socket)}")
 
         state =
           if state[:choked] do
             state = Map.put(state, :choked, false)
-            :ok = Peer.send_unchoke(socket)
+            :ok = Peer.send_message(socket, %Peer.Message.Unchoke{})
             Logger.debug("Unchoked #{inspect(socket)}")
             state
           else
@@ -294,29 +306,35 @@ defmodule Bex.PeerWorker do
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :not_interested} ->
+      %Peer.Message.NotInterested{} ->
         Logger.debug("Received not_interested from #{inspect(socket)}")
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :have, index: index} ->
+      %Peer.Message.Have{index: index} ->
         :ok = active_once(socket)
         :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
         {:noreply, state}
 
-      %{type: :bitfield, bitfield: bitfield_binary} ->
+      %Peer.Message.Bitfield{bitfield: bitfield_binary} ->
         peer_bitfield = BitArray.from_binary(bitfield_binary, length(piece_hashes))
         state = Map.put(state, :peer_bitfield, peer_bitfield)
         Logger.debug("Received and stored bitfield from #{inspect(socket)}")
         :ok = active_once(socket)
         {:noreply, state}
 
-      %{type: :request, index: index, begin: begin, length: length} ->
+      %Peer.Message.Request{index: index, begin: begin, length: length} ->
         with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
              piece = %Piece{index: index, length: piece_length},
              chunk = %Chunk{offset_within_piece: begin, length: length},
              {:ok, chunk_bytes} <- Chunk.read(chunk, piece, file) do
-          :ok = Peer.send_piece(socket, index, begin, chunk_bytes)
+          :ok =
+            Peer.send_message(socket, %Peer.Message.Piece{
+              index: index,
+              begin: begin,
+              chunk: chunk_bytes
+            })
+
           Logger.debug("Sent chunk #{index} #{begin} #{length} to peer")
         end
 
@@ -324,14 +342,14 @@ defmodule Bex.PeerWorker do
 
         {:noreply, state}
 
-      %{type: :piece, index: index, begin: begin, chunk: chunk_bytes} ->
+      %Peer.Message.Piece{index: index, begin: begin, chunk: chunk_bytes} ->
         Logger.debug("Received chunk of length #{byte_size(chunk_bytes)}")
         Logger.debug("Received chunk: index: #{index}, begin: #{begin}, attempting to verify")
 
         state =
           with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
                piece = %Piece{index: index, length: piece_length},
-               chunk = %Chunk{offset_within_piece: begin, length: nil},
+               chunk = %Chunk{offset_within_piece: begin, length: byte_size(chunk_bytes)},
                :ok <- Chunk.write(chunk, piece, file, chunk_bytes),
                :ok <- File.close(file) do
             Logger.info("Got chunk #{index}, #{begin}")
@@ -346,9 +364,9 @@ defmodule Bex.PeerWorker do
             )
 
             outstanding_chunks_for_index =
-              MapSet.delete(outstanding_chunks_for_index, %{
-                offset: begin,
-                length: byte_size(chunk)
+              MapSet.delete(outstanding_chunks_for_index, %Chunk{
+                offset_within_piece: begin,
+                length: byte_size(chunk_bytes)
               })
 
             Logger.info(
@@ -369,7 +387,7 @@ defmodule Bex.PeerWorker do
                        Piece.verify(piece, file, expected_hash),
                      :ok <- File.close(file) do
                   :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
-                  :ok = Peer.send_have(socket, index)
+                  :ok = Peer.send_message(socket, %Peer.Message.Have{index: index})
                   state
                 else
                   e ->
@@ -391,11 +409,11 @@ defmodule Bex.PeerWorker do
 
         {:noreply, state}
 
-      %{type: :cancel, index: _index, begin: _begin, length: _length} ->
+      %Peer.Message.Cancel{index: _index, begin: _begin, length: _length} ->
         :ok = active_once(socket)
         todo("cancel")
 
-      %{type: :keepalive} ->
+      %Peer.Message.Keepalive{} ->
         Logger.debug("Received keepalive from #{inspect(socket)}")
         :ok = active_once(socket)
         {:noreply, state}
@@ -415,7 +433,7 @@ defmodule Bex.PeerWorker do
   end
 
   def handle_info(:keepalive, %{socket: socket, peer_keepalive_tick: peer_keepalive_tick} = state) do
-    Peer.send_keepalive(socket)
+    Peer.send_message(socket, %Peer.Message.Keepalive{})
     Logger.debug("Keepalive sent to #{inspect(socket)}, scheduling another")
     schedule_keepalive(peer_keepalive_tick)
     {:noreply, state}

@@ -1,15 +1,47 @@
 defmodule Bex.Peer do
   @moduledoc false
 
-  alias Bex.{BitArray, PeerSupervisor, Torrent, Metainfo}
+  alias Bex.{BitArray, PeerSupervisor, Metainfo}
   require Logger
 
   defmodule Message do
+    defprotocol Serialize do
+      @spec to_bytes(t) :: iolist()
+      def to_bytes(message)
+    end
+
+    defmodule Handshake do
+      defstruct [:info_hash, :peer_id, :extension_bytes]
+    end
+
+    defimpl Serialize, for: Handshake do
+      def to_bytes(
+            %Message.Handshake{
+              info_hash: info_hash,
+              peer_id: peer_id,
+              extension_bytes: extension_bytes
+            } = message
+          )
+          when byte_size(info_hash) == 20 and
+                 byte_size(peer_id) == 20 and
+                 length(extension_bytes) == 8 do
+        bt = "BitTorrent protocol"
+
+        [19, bt, message.extension_bytes, message.info_hash, message.peer_id]
+      end
+    end
+
     defmodule Choke do
       defstruct []
 
       def type_tag() do
         0
+      end
+    end
+
+    defimpl Serialize, for: Choke do
+      def to_bytes(_message) do
+        [Message.Choke.type_tag()]
       end
     end
 
@@ -21,11 +53,23 @@ defmodule Bex.Peer do
       end
     end
 
+    defimpl Serialize, for: Unchoke do
+      def to_bytes(_message) do
+        [Message.Unchoke.type_tag()]
+      end
+    end
+
     defmodule Interested do
       defstruct []
 
       def type_tag() do
         2
+      end
+    end
+
+    defimpl Serialize, for: Interested do
+      def to_bytes(_message) do
+        [Message.Interested.type_tag()]
       end
     end
 
@@ -37,11 +81,23 @@ defmodule Bex.Peer do
       end
     end
 
+    defimpl Serialize, for: NotInterested do
+      def to_bytes(_message) do
+        [Message.NotInterested.type_tag()]
+      end
+    end
+
     defmodule Have do
       defstruct [:index]
 
       def type_tag() do
         4
+      end
+    end
+
+    defimpl Serialize, for: Have do
+      def to_bytes(message) when is_integer(message.index) do
+        [Message.Have.type_tag(), Message.Serialize.to_bytes(message.index)]
       end
     end
 
@@ -53,11 +109,31 @@ defmodule Bex.Peer do
       end
     end
 
+    defimpl Serialize, for: Bitfield do
+      def to_bytes(message) do
+        bitfield = BitArray.to_binary(message.bitfield)
+        [Message.Bitfield.type_tag(), bitfield]
+      end
+    end
+
     defmodule Request do
       defstruct [:index, :begin, :length]
 
       def type_tag() do
         6
+      end
+    end
+
+    defimpl Serialize, for: Request do
+      def to_bytes(message)
+          when is_integer(message.index) and is_integer(message.begin) and
+                 is_integer(message.length) do
+        [
+          Message.Request.type_tag(),
+          Message.Serialize.to_bytes(message.index),
+          Message.Serialize.to_bytes(message.begin),
+          Message.Serialize.to_bytes(message.length)
+        ]
       end
     end
 
@@ -69,6 +145,19 @@ defmodule Bex.Peer do
       end
     end
 
+    defimpl Serialize, for: Piece do
+      def to_bytes(message)
+          when is_integer(message.index) and is_integer(message.begin) and
+                 is_binary(message.chunk) do
+        [
+          Message.Piece.type_tag(),
+          Message.Serialize.to_bytes(message.index),
+          Message.Serialize.to_bytes(message.begin),
+          message.chunk
+        ]
+      end
+    end
+
     defmodule Cancel do
       defstruct [:index, :begin, :length]
 
@@ -77,8 +166,33 @@ defmodule Bex.Peer do
       end
     end
 
+    defimpl Serialize, for: Cancel do
+      def to_bytes(message)
+          when is_integer(message.index) and is_integer(message.begin) and
+                 is_integer(message.length) do
+        [
+          Message.Cancel.type_tag(),
+          Message.Serialize.to_bytes(message.index),
+          Message.Serialize.to_bytes(message.begin),
+          Message.Serialize.to_bytes(message.length)
+        ]
+      end
+    end
+
     defmodule Keepalive do
       defstruct []
+    end
+
+    defimpl Serialize, for: Keepalive do
+      def to_bytes(_message) do
+        []
+      end
+    end
+
+    defimpl Serialize, for: Integer do
+      def to_bytes(message) do
+        [<<message::32-integer-big>>]
+      end
     end
 
     def parse(packet) do
@@ -149,94 +263,8 @@ defmodule Bex.Peer do
     )
   end
 
-  def send_handshake(socket, info_hash, peer_id) do
-    bt = "BitTorrent protocol"
-
-    message = [
-      19,
-      bt,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      info_hash,
-      peer_id
-    ]
-
-    send_message(
-      socket,
-      message
-    )
-  end
-
-  def send_keepalive(socket) do
-    send_message(socket, <<>>)
-  end
-
-  def send_choke(socket) do
-    send_message(socket, <<Message.Choke.type_tag()>>)
-  end
-
-  def send_unchoke(socket) do
-    send_message(socket, <<Message.Unchoke.type_tag()>>)
-  end
-
-  def send_interested(socket) do
-    send_message(socket, <<Message.Interested.type_tag()>>)
-  end
-
-  def send_not_interested(socket) do
-    send_message(socket, <<Message.NotInterested.type_tag()>>)
-  end
-
-  def send_have(socket, index) do
-    encoded_index = Torrent.encode_number(index)
-    send_message(socket, [Message.Have.type_tag(), encoded_index])
-  end
-
-  def send_bitfield(socket, %BitArray{} = bitfield) do
-    bitfield = BitArray.to_binary(bitfield)
-    send_message(socket, [Message.Bitfield.type_tag(), bitfield])
-  end
-
-  def send_request(socket, index, begin, length) do
-    send_message(
-      socket,
-      [
-        Message.Request.type_tag(),
-        Torrent.encode_number(index),
-        Torrent.encode_number(begin),
-        Torrent.encode_number(length)
-      ]
-    )
-  end
-
-  def send_piece(socket, index, begin, piece) do
-    send_message(socket, [
-      Message.Piece.type_tag(),
-      Torrent.encode_number(index),
-      Torrent.encode_number(begin),
-      piece
-    ])
-  end
-
-  def send_cancel(socket, index, begin, length) do
-    send_message(
-      socket,
-      [
-        Message.Cancel.type_tag(),
-        Torrent.encode_number(index),
-        Torrent.encode_number(begin),
-        Torrent.encode_number(length)
-      ]
-    )
-  end
-
-  def send_message(socket, iolist) do
+  def send_message(socket, serializable) do
+    iolist = Message.Serialize.to_bytes(serializable)
     :gen_tcp.send(socket, iolist)
   end
 

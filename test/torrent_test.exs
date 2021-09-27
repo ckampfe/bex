@@ -3,11 +3,6 @@ defmodule TorrentTest do
 
   alias Bex.{Torrent, Chunk}
 
-  test "encode_number/1" do
-    assert Torrent.encode_number(1) == <<0, 0, 0, 1>>
-    assert Torrent.encode_number(255) == <<0, 0, 0, 255>>
-  end
-
   test "compute_chunks/4, 1 special" do
     # 32768 bytes
     piece_length = :math.pow(2, 15) |> Kernel.trunc()

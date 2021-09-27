@@ -11,10 +11,11 @@ defmodule Bex.Torrent do
 
   def validate_existing_data(
         %Metainfo{
-          decorated: %Metainfo.Decorated{
-            have_pieces: %BitArray{} = have_pieces,
-            piece_hashes: piece_hashes
-          },
+          decorated:
+            %Metainfo.Decorated{
+              have_pieces: %BitArray{} = have_pieces,
+              piece_hashes: piece_hashes
+            } = decorated,
           info: %Bex.Metainfo.Info{"piece length": piece_length, length: length}
         } = metainfo,
         download_path
@@ -37,7 +38,7 @@ defmodule Bex.Torrent do
           end
         end)
 
-      metainfo = Kernel.put_in(metainfo, [:decorated, :have_pieces], have_pieces)
+      metainfo = %{metainfo | decorated: %{decorated | have_pieces: have_pieces}}
 
       File.close(file)
 
@@ -133,11 +134,6 @@ defmodule Bex.Torrent do
         normal_chunks
       end
     end
-  end
-
-  # All later integers sent in the protocol are encoded as four bytes big-endian.
-  def encode_number(number) do
-    <<number::32-integer-big>>
   end
 
   def generate_peer_id() do
