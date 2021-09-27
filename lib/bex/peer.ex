@@ -4,15 +4,117 @@ defmodule Bex.Peer do
   alias Bex.{BitArray, PeerSupervisor, Torrent, Metainfo}
   require Logger
 
-  @choke 0
-  @unchoke 1
-  @interested 2
-  @not_interested 3
-  @have 4
-  @bitfield 5
-  @request 6
-  @piece 7
-  @cancel 8
+  defmodule Message do
+    defmodule Choke do
+      defstruct []
+
+      def type_tag() do
+        0
+      end
+    end
+
+    defmodule Unchoke do
+      defstruct []
+
+      def type_tag() do
+        1
+      end
+    end
+
+    defmodule Interested do
+      defstruct []
+
+      def type_tag() do
+        2
+      end
+    end
+
+    defmodule NotInterested do
+      defstruct []
+
+      def type_tag() do
+        3
+      end
+    end
+
+    defmodule Have do
+      defstruct [:index]
+
+      def type_tag() do
+        4
+      end
+    end
+
+    defmodule Bitfield do
+      defstruct [:bitfield]
+
+      def type_tag() do
+        5
+      end
+    end
+
+    defmodule Request do
+      defstruct [:index, :begin, :length]
+
+      def type_tag() do
+        6
+      end
+    end
+
+    defmodule Piece do
+      defstruct [:index, :begin, :chunk]
+
+      def type_tag() do
+        7
+      end
+    end
+
+    defmodule Cancel do
+      defstruct [:index, :begin, :length]
+
+      def type_tag() do
+        8
+      end
+    end
+
+    defmodule Keepalive do
+      defstruct []
+    end
+
+    def parse(packet) do
+      case packet do
+        <<0>> ->
+          %Message.Choke{}
+
+        <<1>> ->
+          %Message.Unchoke{}
+
+        <<2>> ->
+          %Message.Interested{}
+
+        <<3>> ->
+          %Message.NotInterested{}
+
+        <<4, index::32-integer-big>> ->
+          %Message.Have{index: index}
+
+        <<5, bitfield::binary()>> ->
+          %Message.Bitfield{bitfield: bitfield}
+
+        <<6, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
+          %Message.Request{index: index, begin: begin, length: length}
+
+        <<7, index::32-integer-big, begin::32-integer-big, chunk::binary()>> ->
+          %Message.Piece{index: index, begin: begin, chunk: chunk}
+
+        <<8, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
+          %Message.Cancel{index: index, begin: begin, length: length}
+
+        <<>> ->
+          %Message.Keepalive{}
+      end
+    end
+  end
 
   ### SEND
 
@@ -76,36 +178,36 @@ defmodule Bex.Peer do
   end
 
   def send_choke(socket) do
-    send_message(socket, <<@choke>>)
+    send_message(socket, <<Message.Choke.type_tag()>>)
   end
 
   def send_unchoke(socket) do
-    send_message(socket, <<@unchoke>>)
+    send_message(socket, <<Message.Unchoke.type_tag()>>)
   end
 
   def send_interested(socket) do
-    send_message(socket, <<@interested>>)
+    send_message(socket, <<Message.Interested.type_tag()>>)
   end
 
   def send_not_interested(socket) do
-    send_message(socket, <<@not_interested>>)
+    send_message(socket, <<Message.NotInterested.type_tag()>>)
   end
 
   def send_have(socket, index) do
     encoded_index = Torrent.encode_number(index)
-    send_message(socket, [@have, encoded_index])
+    send_message(socket, [Message.Have.type_tag(), encoded_index])
   end
 
   def send_bitfield(socket, %BitArray{} = bitfield) do
     bitfield = BitArray.to_binary(bitfield)
-    send_message(socket, [@bitfield, bitfield])
+    send_message(socket, [Message.Bitfield.type_tag(), bitfield])
   end
 
   def send_request(socket, index, begin, length) do
     send_message(
       socket,
       [
-        @request,
+        Message.Request.type_tag(),
         Torrent.encode_number(index),
         Torrent.encode_number(begin),
         Torrent.encode_number(length)
@@ -115,7 +217,7 @@ defmodule Bex.Peer do
 
   def send_piece(socket, index, begin, piece) do
     send_message(socket, [
-      @piece,
+      Message.Piece.type_tag(),
       Torrent.encode_number(index),
       Torrent.encode_number(begin),
       piece
@@ -126,7 +228,7 @@ defmodule Bex.Peer do
     send_message(
       socket,
       [
-        @cancel,
+        Message.Cancel.type_tag(),
         Torrent.encode_number(index),
         Torrent.encode_number(begin),
         Torrent.encode_number(length)
@@ -139,40 +241,6 @@ defmodule Bex.Peer do
   end
 
   ### RECEIVE
-
-  def parse_message(packet) do
-    case packet do
-      <<0>> ->
-        %{type: :choke}
-
-      <<1>> ->
-        %{type: :unchoke}
-
-      <<2>> ->
-        %{type: :interested}
-
-      <<3>> ->
-        %{type: :not_interested}
-
-      <<4, index::32-integer-big>> ->
-        %{type: :have, index: index}
-
-      <<5, bitfield::binary()>> ->
-        %{type: :bitfield, bitfield: bitfield}
-
-      <<6, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
-        %{type: :request, index: index, begin: begin, length: length}
-
-      <<7, index::32-integer-big, begin::32-integer-big, chunk::binary()>> ->
-        %{type: :piece, index: index, begin: begin, chunk: chunk}
-
-      <<8, index::32-integer-big, begin::32-integer-big, length::32-integer-big>> ->
-        %{type: :cancel, index: index, begin: begin, length: length}
-
-      <<>> ->
-        %{type: :keepalive}
-    end
-  end
 
   def generate_peer_id() do
     header = "-BEX001-"

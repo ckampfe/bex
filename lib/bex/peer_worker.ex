@@ -245,7 +245,7 @@ defmodule Bex.PeerWorker do
           remote_peer_id: remote_peer_id
         } = state
       ) do
-    case Peer.parse_message(rest) do
+    case Peer.Message.parse(rest) do
       %{type: :choke} ->
         Logger.debug("Received choke from #{inspect(socket)}, choked them")
 
