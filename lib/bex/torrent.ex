@@ -1,7 +1,7 @@
 defmodule Bex.Torrent do
   @moduledoc false
 
-  alias Bex.{BitArray, Metainfo}
+  alias Bex.{BitArray, Metainfo, Piece, Chunk}
   require Logger
 
   def load(path) do
@@ -11,11 +11,10 @@ defmodule Bex.Torrent do
 
   def validate_existing_data(
         %Metainfo{
-          decorated:
-            %Metainfo.Decorated{
-              have_pieces: %BitArray{} = have_pieces,
-              piece_hashes: piece_hashes
-            } = decorated,
+          decorated: %Metainfo.Decorated{
+            have_pieces: %BitArray{} = have_pieces,
+            piece_hashes: piece_hashes
+          },
           info: %Bex.Metainfo.Info{"piece length": piece_length, length: length}
         } = metainfo,
         download_path
@@ -28,15 +27,17 @@ defmodule Bex.Torrent do
       have_pieces =
         piece_hashes
         |> Enum.with_index()
-        |> Enum.reduce(have_pieces, fn {hash, index}, bitfield ->
-          if hash_piece_from_file(file, index, piece_length) == hash do
+        |> Enum.reduce(have_pieces, fn {expected_hash, index}, bitfield ->
+          piece = %Piece{index: index, length: piece_length}
+
+          if Bex.Piece.verify(piece, file, expected_hash) do
             BitArray.set(bitfield, index)
           else
             bitfield
           end
         end)
 
-      metainfo = %{metainfo | decorated: %{decorated | have_pieces: have_pieces}}
+      metainfo = Kernel.put_in(metainfo, [:decorated, :have_pieces], have_pieces)
 
       File.close(file)
 
@@ -82,70 +83,23 @@ defmodule Bex.Torrent do
     end
   end
 
-  def write_piece(file, index, piece_length, piece) do
-    location = calculate_piece_location(index, piece_length)
-    :file.pwrite(file, location, piece)
-  end
-
-  def write_chunk(file, index, chunk_offset, piece_length, chunk) do
-    location = calculate_piece_location(index, piece_length) + chunk_offset
-    out = :file.pwrite(file, location, chunk)
-    :file.position(file, :bof)
-    out
-  end
-
-  def read_piece(file, index, piece_length) do
-    location = calculate_piece_location(index, piece_length)
-
-    :file.pread(file, location, piece_length)
-  end
-
-  def read_chunk(file, index, piece_length, begin, length) do
-    index_location = calculate_piece_location(index, piece_length)
-    location = index_location + begin
-    :file.pread(file, location, length)
-  end
-
-  def verify_piece(piece, expected_hash) do
-    hash(piece) == expected_hash
-  end
-
-  def verify_piece_from_file(file, index, piece_length, expected_hash) do
-    hash_piece_from_file(file, index, piece_length) == expected_hash
-  end
-
-  def hash_piece_from_file(file, index, piece_length) do
-    case read_piece(file, index, piece_length) do
-      {:ok, bytes} ->
-        hash(bytes)
-
-      {:error, _error} = e ->
-        e
-    end
-  end
-
   def hash(bytes) do
     :crypto.hash(:sha, bytes)
   end
 
-  def calculate_piece_location(index, piece_length) when index >= 0 do
-    index * piece_length
-  end
-
-  def have(indexes, i) when is_list(indexes) do
-    List.replace_at(indexes, i, true)
-  end
-
   def compute_chunks(total_length, nominal_piece_length, index, nominal_chunk_length) do
     normal_chunks =
-      Stream.iterate(%{offset: 0, length: nominal_chunk_length}, fn %{
-                                                                      offset: offset,
-                                                                      length: chunk_length
-                                                                    } ->
-        %{offset: offset + chunk_length, length: chunk_length}
+      Stream.iterate(%Chunk{offset_within_piece: 0, length: nominal_chunk_length}, fn %Chunk{
+                                                                                        offset_within_piece:
+                                                                                          offset,
+                                                                                        length:
+                                                                                          chunk_length
+                                                                                      } ->
+        %Chunk{offset_within_piece: offset + chunk_length, length: chunk_length}
       end)
 
-    piece_location = calculate_piece_location(index, nominal_piece_length)
+    piece = %Bex.Piece{index: index, length: nominal_piece_length}
+    piece_location = Bex.Piece.byte_location(piece)
 
     actual_piece_length =
       if total_length - piece_location >= nominal_piece_length do
@@ -159,15 +113,17 @@ defmodule Bex.Torrent do
     normal_chunks = Enum.take(normal_chunks, number_of_normal_chunks)
 
     if Enum.empty?(normal_chunks) do
-      [%{offset: 0, length: total_length - piece_location}]
+      [%Chunk{offset_within_piece: 0, length: total_length - piece_location}]
     else
-      %{offset: last_chunk_offset, length: last_chunk_length} = List.last(normal_chunks)
+      %Chunk{offset_within_piece: last_chunk_offset, length: last_chunk_length} =
+        List.last(normal_chunks)
+
       remaining = actual_piece_length - (last_chunk_offset + last_chunk_length)
 
       if remaining > 0 do
         [
-          %{
-            offset: last_chunk_offset + last_chunk_length,
+          %Chunk{
+            offset_within_piece: last_chunk_offset + last_chunk_length,
             length: actual_piece_length - (last_chunk_offset + last_chunk_length)
           }
           | normal_chunks

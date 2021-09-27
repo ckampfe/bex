@@ -2,7 +2,7 @@ defmodule Bex.PeerWorker do
   @moduledoc false
 
   use GenServer, restart: :transient
-  alias Bex.{BitArray, Peer, TorrentControllerWorker, Torrent, Metainfo}
+  alias Bex.{BitArray, Peer, TorrentControllerWorker, Torrent, Metainfo, Chunk, Piece}
 
   require Logger
 
@@ -313,8 +313,10 @@ defmodule Bex.PeerWorker do
 
       %{type: :request, index: index, begin: begin, length: length} ->
         with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
-             {:ok, chunk} <- Torrent.read_chunk(file, index, piece_length, begin, length) do
-          :ok = Peer.send_piece(socket, index, begin, chunk)
+             piece = %Piece{index: index, length: piece_length},
+             chunk = %Chunk{offset_within_piece: begin, length: length},
+             {:ok, chunk_bytes} <- Chunk.read(chunk, piece, file) do
+          :ok = Peer.send_piece(socket, index, begin, chunk_bytes)
           Logger.debug("Sent chunk #{index} #{begin} #{length} to peer")
         end
 
@@ -322,13 +324,15 @@ defmodule Bex.PeerWorker do
 
         {:noreply, state}
 
-      %{type: :piece, index: index, begin: begin, chunk: chunk} ->
-        Logger.debug("Received chunk of length #{byte_size(chunk)}")
+      %{type: :piece, index: index, begin: begin, chunk: chunk_bytes} ->
+        Logger.debug("Received chunk of length #{byte_size(chunk_bytes)}")
         Logger.debug("Received chunk: index: #{index}, begin: #{begin}, attempting to verify")
 
         state =
           with {:ok, file} <- File.open(download_path, [:write, :read, :raw]),
-               :ok <- Torrent.write_chunk(file, index, begin, piece_length, chunk),
+               piece = %Piece{index: index, length: piece_length},
+               chunk = %Chunk{offset_within_piece: begin, length: nil},
+               :ok <- Chunk.write(chunk, piece, file, chunk_bytes),
                :ok <- File.close(file) do
             Logger.info("Got chunk #{index}, #{begin}")
 
@@ -362,7 +366,7 @@ defmodule Bex.PeerWorker do
 
                 with {:ok, file} <- File.open(download_path, [:read, :raw, :binary]),
                      true <-
-                       Torrent.verify_piece_from_file(file, index, piece_length, expected_hash),
+                       Piece.verify(piece, file, expected_hash),
                      :ok <- File.close(file) do
                   :ok = TorrentControllerWorker.have(info_hash, remote_peer_id, index)
                   :ok = Peer.send_have(socket, index)
