@@ -12,6 +12,12 @@ defmodule Bex.Peer do
 
     defmodule Handshake do
       defstruct [:info_hash, :peer_id, :extension_bytes]
+
+      @type t :: %__MODULE__{
+              info_hash: binary(),
+              peer_id: binary(),
+              extension_bytes: list(integer())
+            }
     end
 
     defimpl Serialize, for: Handshake do
@@ -34,6 +40,7 @@ defmodule Bex.Peer do
     defmodule Choke do
       defstruct []
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         0
       end
@@ -48,6 +55,7 @@ defmodule Bex.Peer do
     defmodule Unchoke do
       defstruct []
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         1
       end
@@ -62,6 +70,7 @@ defmodule Bex.Peer do
     defmodule Interested do
       defstruct []
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         2
       end
@@ -76,6 +85,7 @@ defmodule Bex.Peer do
     defmodule NotInterested do
       defstruct []
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         3
       end
@@ -90,6 +100,7 @@ defmodule Bex.Peer do
     defmodule Have do
       defstruct [:index]
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         4
       end
@@ -104,6 +115,7 @@ defmodule Bex.Peer do
     defmodule Bitfield do
       defstruct [:bitfield]
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         5
       end
@@ -119,6 +131,7 @@ defmodule Bex.Peer do
     defmodule Request do
       defstruct [:index, :begin, :length]
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         6
       end
@@ -140,6 +153,7 @@ defmodule Bex.Peer do
     defmodule Piece do
       defstruct [:index, :begin, :chunk]
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         7
       end
@@ -161,6 +175,7 @@ defmodule Bex.Peer do
     defmodule Cancel do
       defstruct [:index, :begin, :length]
 
+      @spec type_tag() :: non_neg_integer()
       def type_tag() do
         8
       end
@@ -263,6 +278,7 @@ defmodule Bex.Peer do
     )
   end
 
+  @spec send_message(:gen_tcp.socket(), term) :: :ok | {:error, term}
   def send_message(socket, serializable) do
     iolist = Message.Serialize.to_bytes(serializable)
     :gen_tcp.send(socket, iolist)

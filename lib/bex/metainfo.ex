@@ -3,14 +3,32 @@ defmodule Bex.Metainfo do
 
   defstruct [:announce, :"created by", :"creation date", :encoding, :info, :decorated]
 
+  @type t :: %__MODULE__{
+          announce: String.t(),
+          "created by": String.t(),
+          "creation date": String.t(),
+          encoding: String.t(),
+          info: Bex.Metainfo.Info.t(),
+          decorated: Bex.Metainfo.Decorated.t()
+        }
+
   defmodule Info do
     defstruct [:length, :name, :"piece length", :pieces, :private]
+
+    @type t :: %__MODULE__{}
   end
 
   defmodule Decorated do
     defstruct [:info_hash, :piece_hashes, :have_pieces]
+
+    @type t :: %__MODULE__{
+            info_hash: binary(),
+            piece_hashes: list(binary()),
+            have_pieces: Bex.BitArray.t()
+          }
   end
 
+  @spec from_string(String.t()) :: {:ok, t}
   def from_string(s) do
     with {"", %{info: %{pieces: pieces} = info} = raw_metainfo} <-
            Bencode.decode(s, atom_keys: true) do

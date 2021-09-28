@@ -1,6 +1,10 @@
 defmodule Bex.BitArray do
   defstruct [:repr, :number_of_pieces]
 
+  @type t :: %__MODULE__{}
+
+  @spec new(pos_integer()) :: t
+  @spec new(list(boolean()) | list(1 | 0)) :: t
   def new(number_of_pieces) when is_integer(number_of_pieces) and number_of_pieces > 0 do
     %__MODULE__{
       repr: :array.new(number_of_pieces, default: false),
@@ -38,6 +42,7 @@ defmodule Bex.BitArray do
     |> new()
   end
 
+  @spec from_binary(binary(), pos_integer()) :: t
   def from_binary(binary, number_of_pieces)
       when is_binary(binary) and is_integer(number_of_pieces) do
     list =
@@ -49,6 +54,7 @@ defmodule Bex.BitArray do
     new(list)
   end
 
+  @spec to_binary(t) :: binary()
   def to_binary(%__MODULE__{number_of_pieces: number_of_pieces} = this) do
     raw_binary =
       this
@@ -80,10 +86,12 @@ defmodule Bex.BitArray do
     end
   end
 
+  @spec to_list(t) :: list(boolean())
   def to_list(%__MODULE__{repr: repr}) do
     :array.to_list(repr)
   end
 
+  @spec equals?(t, t) :: boolean()
   def equals?(
         %__MODULE__{
           number_of_pieces: number_of_pices_1
@@ -99,19 +107,23 @@ defmodule Bex.BitArray do
     end
   end
 
+  @spec get(t, non_neg_integer()) :: boolean()
   def get(%__MODULE__{repr: repr, number_of_pieces: number_of_pieces}, index)
       when is_integer(index) and index >= 0 and index < number_of_pieces do
     :array.get(index, repr)
   end
 
+  @spec set(t, non_neg_integer()) :: t
   def set(%__MODULE__{repr: repr} = this, index) do
     %{this | repr: :array.set(index, true, repr)}
   end
 
+  @spec unset(t, non_neg_integer()) :: t
   def unset(%__MODULE__{repr: repr} = this, index) do
     %{this | repr: :array.set(index, false, repr)}
   end
 
+  @spec set_count(t) :: non_neg_integer()
   def set_count(%__MODULE__{repr: repr}) do
     :array.foldl(
       fn _i, v, acc ->
@@ -126,18 +138,22 @@ defmodule Bex.BitArray do
     )
   end
 
+  @spec unset_count(t) :: non_neg_integer()
   def unset_count(%__MODULE__{number_of_pieces: number_of_pieces} = this) do
     number_of_pieces - set_count(this)
   end
 
+  @spec all?(t) :: boolean()
   def all?(%__MODULE__{number_of_pieces: number_of_pieces} = this) do
     set_count(this) == number_of_pieces
   end
 
+  @spec any?(t) :: boolean()
   def any?(%__MODULE__{} = this) do
     set_count(this) > 0
   end
 
+  @spec none?(t) :: boolean()
   def none?(%__MODULE__{number_of_pieces: number_of_pieces} = this) do
     unset_count(this) == number_of_pieces
   end
